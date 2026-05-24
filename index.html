@@ -42,10 +42,13 @@
     @keyframes toastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(20px)}}
     .toast-in{animation:toastIn 0.3s ease-out forwards}
     .toast-out{animation:toastOut 0.3s ease-in forwards}
+    @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
     @media print{
       .no-print{display:none!important}
-      body{background:white}
-      .print-card{box-shadow:none!important;border:1px solid #e7e5e4!important}
+      body{background:white!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .report-cover{border-radius:0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-after:always}
+      .report-section{page-break-inside:avoid}
+      .report-section-break{page-break-before:always}
     }
   </style>
 </head>
@@ -909,6 +912,385 @@ const getFocus=(progress,surplus)=>{
   ]};
 };
 
+// ─── Advisor Insights Generator ──────────────────────────────────────────────────
+
+function generateAdvisorInsights(data, r) {
+  const n = data.name ? data.name.split(' ')[0] : 'your client';
+  const surplus = r.retirementGap <= 0;
+  const progress = Math.round(r.goalProgress);
+  const cur = data.currency;
+
+  // Top expense categories
+  const expSorted = EXPENSE_CATEGORIES
+    .map(c=>({...c, amt: data.expenses[c.key]||0}))
+    .filter(c=>c.amt>0).sort((a,b)=>b.amt-a.amt);
+  const top2 = expSorted.slice(0,2);
+
+  // Income source count
+  const incomeSources = [data.cpfLifeMonthly,data.rentalIncome,data.businessIncome,data.passiveIncome,data.otherRetirementIncome].filter(v=>+v>0).length;
+
+  const inflationImpact = r.futureMonthlyNeed - r.currentMonthlyNeed;
+  const healthcareAmt = data.expenses.healthcare || 0;
+
+  // ── Observations ──────────────────────────────────────────────────────────────
+  const observations = [];
+
+  if (surplus) {
+    observations.push(`${n}'s current savings trajectory is projected to exceed the retirement target of ${fmt(r.simpleTotalFundNeeded,cur)} — a strong foundation that reflects consistent, disciplined planning.`);
+  } else if (progress >= 70) {
+    observations.push(`${n} is ${progress}% toward a retirement goal of ${fmt(r.simpleTotalFundNeeded,cur)}. The gap of ${fmt(r.retirementGap,cur)} is within reach over the next ${r.yearsToRetirement} years with focused effort.`);
+  } else {
+    observations.push(`${n} is currently ${progress}% toward a retirement target of ${fmt(r.simpleTotalFundNeeded,cur)}. The gap of ${fmt(r.retirementGap,cur)} is meaningful — and this conversation is an important starting point for building a clearer plan.`);
+  }
+
+  if (top2.length >= 2) {
+    observations.push(`The two largest expected retirement expenses are ${top2[0].label.toLowerCase()} (${fmt(top2[0].amt,cur)}/month) and ${top2[1].label.toLowerCase()} (${fmt(top2[1].amt,cur)}/month). These carry the most planning weight and are worth exploring in the conversation.`);
+  } else {
+    observations.push(`The total expected monthly retirement lifestyle cost of ${fmt(r.currentMonthlyNeed,cur)} today will grow to ${fmt(r.futureMonthlyNeed,cur)} by retirement after inflation — a ${Math.round((r.futureMonthlyNeed/r.currentMonthlyNeed-1)*100)}% uplift worth discussing openly.`);
+  }
+
+  if (r.yearsToRetirement <= 0) {
+    observations.push(`${n} is at or near retirement age. The planning emphasis shifts from accumulation to structuring a sustainable income drawdown strategy across a ${r.retirementDuration}-year retirement horizon.`);
+  } else {
+    observations.push(`${n} has a ${r.yearsToRetirement}-year accumulation window before retirement at age ${data.retirementAge}, followed by a ${r.retirementDuration}-year retirement phase to plan for.`);
+  }
+
+  // ── Concerns ─────────────────────────────────────────────────────────────────
+  const concerns = [];
+
+  if (surplus) {
+    concerns.push(`Even with a projected surplus, sequence-of-returns risk — especially in the first decade of retirement — can erode accumulated wealth faster than expected. A structured withdrawal strategy will be important.`);
+  } else if (progress < 60) {
+    concerns.push(`The retirement funding gap of ${fmt(r.retirementGap,cur)} is significant. Without meaningful changes to contributions, lifestyle assumptions, or retirement timing, this gap is unlikely to close on its own.`);
+  } else {
+    concerns.push(`A retirement gap of ${fmt(r.retirementGap,cur)} remains. The position is encouraging, but maintaining contribution momentum and avoiding lifestyle inflation over the coming years will be key.`);
+  }
+
+  if (r.yearsToRetirement > 0 && r.yearsToRetirement < 10) {
+    concerns.push(`With ${r.yearsToRetirement} years to retirement, the compounding window is narrowing. Each year of delay in addressing the gap has a proportionally larger impact now than earlier in the accumulation journey.`);
+  } else if (incomeSources <= 1) {
+    concerns.push(`The retirement income plan currently relies on ${incomeSources === 0 ? 'portfolio drawdown alone' : 'primarily one income source'}. A single-source plan is more vulnerable to market volatility, policy changes, and longevity risk.`);
+  } else {
+    concerns.push(`With ${incomeSources} retirement income sources in place, the next question is sequencing — knowing which source to draw from first and when, to minimise tax drag and depletion risk.`);
+  }
+
+  concerns.push(`Inflation will require ${fmt(inflationImpact,cur)} more per month at retirement compared to today's lifestyle cost — a ${Math.round((inflationImpact/r.currentMonthlyNeed)*100)}% real-terms uplift that clients often underestimate when they first see their retirement numbers.`);
+
+  // ── Questions ─────────────────────────────────────────────────────────────────
+  const questions = [];
+
+  questions.push(`"When you look at this number — ${fmt(r.simpleTotalFundNeeded,cur)} — does it feel close to the retirement life you had in mind? Or does something need to change?"`);
+
+  if (surplus) {
+    questions.push(`"You're in a strong position. What would give you even more confidence — is it protecting what you've built, thinking about legacy, or exploring whether you could retire earlier?"`);
+  } else {
+    questions.push(`"If you had to adjust one thing — whether that's your lifestyle expectations, your retirement age, or how much you set aside monthly — which would feel most comfortable to start with?"`);
+  }
+
+  const topLabel = top2[0]?.label?.toLowerCase() || 'lifestyle expenses';
+  questions.push(`"Which part of your retirement lifestyle feels most important to protect — even if we needed to make trade-offs elsewhere? For example, is it ${topLabel}, travel, or having flexibility with healthcare?"`);
+
+  // ── Opportunities ─────────────────────────────────────────────────────────────
+  const opportunities = [];
+
+  if (!surplus && r.monthlyTopUp > 0) {
+    opportunities.push(`Increasing the monthly retirement contribution by ${fmt(r.monthlyTopUp,cur)} would close the current gap by age ${data.retirementAge}. Even bridging half the gap now and reviewing in 12 months keeps the trajectory moving in the right direction.`);
+  } else {
+    opportunities.push(`The projected surplus of ${fmt(Math.abs(r.retirementGap),cur)} creates room for a meaningful legacy or gifting strategy — whether through a trust structure, family support plan, or charitable giving goals worth exploring together.`);
+  }
+
+  if (incomeSources < 2) {
+    opportunities.push(`Building one additional income stream — such as a dividend portfolio, a rental property, or an annuity plan — would meaningfully reduce dependence on portfolio drawdown and improve income resilience across a long retirement.`);
+  } else {
+    opportunities.push(`With ${incomeSources} income sources in place, there is an opportunity to map out the optimal withdrawal sequence — which source to activate first, when to trigger CPF LIFE, and how to structure drawdowns to extend the plan's longevity.`);
+  }
+
+  if (healthcareAmt < 600) {
+    opportunities.push(`The current healthcare allocation of ${fmt(healthcareAmt,cur)}/month may be worth reviewing. Medical costs in Singapore grow at 6–8% annually, and a critical illness or long-term care event in later retirement can materially affect accumulated wealth. Reviewing coverage now is significantly less costly than addressing it later.`);
+  } else {
+    opportunities.push(`Stress-testing this plan at a higher inflation rate — say 3.5–4% — would show the range of outcomes and help ${n} build confidence by preparing for less favourable scenarios alongside the base case.`);
+  }
+
+  return { observations, concerns, questions, opportunities };
+}
+
+// ─── Advisor Mode Components ───────────────────────────────────────────────────────
+
+const InsightCard = ({icon, title, items, colors, isQuote=false})=>(
+  <div style={{background:colors.bg, border:`1px solid ${colors.border}`, borderRadius:14, padding:20, display:'flex', flexDirection:'column', gap:0}}>
+    <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:14}}>
+      <span style={{fontSize:16}}>{icon}</span>
+      <span style={{fontSize:12, fontWeight:700, color:colors.title, fontFamily:'Georgia,serif'}}>{title}</span>
+    </div>
+    <div style={{display:'flex', flexDirection:'column', gap:11}}>
+      {items.map((item,i)=>(
+        <div key={i} style={{display:'flex', alignItems:'flex-start', gap:10}}>
+          <span style={{width:20,height:20,borderRadius:'50%',background:colors.numBg,color:colors.numTc,
+            fontSize:9,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',
+            flexShrink:0,marginTop:1}}>{i+1}</span>
+          <span style={{fontSize:12,color:colors.text,lineHeight:1.7,
+            fontStyle:isQuote?'italic':'normal',
+            borderLeft:isQuote?`2px solid ${colors.border}`:'none',
+            paddingLeft:isQuote?10:0}}>{item}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const AdvisorMode = ({data, r, visible})=>{
+  if(!visible) return null;
+  const ins = generateAdvisorInsights(data, r);
+  const cards = [
+    {icon:'🔍', title:'Key Observations',           items:ins.observations, isQuote:false, colors:{bg:'#f0f9ff',border:'#bae6fd',title:'#0c4a6e',text:'#0369a1',numBg:'#bae6fd',numTc:'#0284c7'}},
+    {icon:'⚠️', title:'Possible Concerns',           items:ins.concerns,     isQuote:false, colors:{bg:'#fffbeb',border:'#fde68a',title:'#451a03',text:'#78350f',numBg:'#fde68a',numTc:'#b45309'}},
+    {icon:'💬', title:'Conversation Questions',      items:ins.questions,    isQuote:true,  colors:{bg:'#f0fdf4',border:'#bbf7d0',title:'#14532d',text:'#166534',numBg:'#bbf7d0',numTc:'#15803d'}},
+    {icon:'🚀', title:'Planning Opportunities',      items:ins.opportunities,isQuote:false, colors:{bg:'#faf5ff',border:'#e9d5ff',title:'#3b0764',text:'#6b21a8',numBg:'#e9d5ff',numTc:'#7e22ce'}},
+  ];
+  return(
+    <div className="slide-in" style={{marginTop:24}}>
+      {/* Header band */}
+      <div style={{background:'#0f172a',borderRadius:'16px 16px 0 0',padding:'14px 22px',
+        display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:15}}>🎯</span>
+          <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:15,color:'white'}}>Advisor Conversation Mode</span>
+        </div>
+        <span style={{background:'#1e293b',color:'#64748b',fontSize:9,fontWeight:700,
+          padding:'3px 9px',borderRadius:99,textTransform:'uppercase',letterSpacing:'0.09em',
+          border:'1px solid #334155'}}>For Advisor Use</span>
+      </div>
+
+      {/* Body */}
+      <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderTop:'none',
+        borderRadius:'0 0 16px 16px',padding:20}}>
+
+        {/* Intro line */}
+        <p style={{fontSize:12,color:'#475569',lineHeight:1.6,marginBottom:16,
+          borderLeft:'3px solid #94a3b8',paddingLeft:12}}>
+          Use the insights below to guide your conversation with {data.name||'your client'}. These observations are drawn directly from their plan inputs and are designed to open a productive, client-led dialogue.
+        </p>
+
+        {/* 2×2 Grid */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:16}}>
+          {cards.map(c=>(
+            <InsightCard key={c.title} icon={c.icon} title={c.title}
+              items={c.items} colors={c.colors} isQuote={c.isQuote}/>
+          ))}
+        </div>
+
+        {/* Footer note */}
+        <div style={{background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:10,
+          padding:'10px 14px',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:13,flexShrink:0}}>ℹ️</span>
+          <p style={{fontSize:10,color:'#64748b',lineHeight:1.6,margin:0}}>
+            This section is generated from the client's plan inputs to support advisor-led conversations. It does not constitute financial advice and should be used alongside your own professional judgment. This section is hidden during printing by default.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Report Generation Utilities ──────────────────────────────────────────────────
+
+function generateExecSummary(data, r) {
+  const surplus = r.retirementGap <= 0;
+  const cur = data.currency || 'SGD';
+  const lifestyle = LIFESTYLE_PRESETS[data.lifestyleChoice]?.label || 'custom';
+  let statusPhrase;
+  if (surplus) {
+    statusPhrase = `${data.name||'You'} ${data.name?'is':'are'} on track for a comfortable retirement, projected to exceed the target by ${fmt(Math.abs(r.retirementGap),cur)}.`;
+  } else if (r.goalProgress >= 70) {
+    statusPhrase = `With focused action on the areas below, the gap can be meaningfully closed — ${data.name||'you'} ${data.name?'is':'are'} currently ${fmtPct(r.goalProgress)} of the way there.`;
+  } else {
+    statusPhrase = `There is a meaningful opportunity to strengthen retirement readiness — ${data.name||'you'} ${data.name?'is':'are'} currently at ${fmtPct(r.goalProgress)} of the retirement goal.`;
+  }
+  const paragraph = `${data.name||'This plan'} targets a ${lifestyle} lifestyle in retirement starting at age ${data.retirementAge}, planning through to age ${data.planningAge} — a ${r.retirementDuration}-year retirement horizon. Today's lifestyle costs ${fmt(r.currentMonthlyNeed,cur)}/month, rising to an estimated ${fmt(r.futureMonthlyNeed,cur)}/month in future dollars, which implies a total fund target of ${fmt(r.simpleTotalFundNeeded,cur)}. ${statusPhrase}`;
+  const stats = [
+    {label:'Monthly Need at Retirement', value:fmt(r.futureMonthlyNeed,cur), color:'#1c1917'},
+    {label:'Total Fund Target', value:fmt(r.simpleTotalFundNeeded,cur), color:'#1c1917'},
+    {label:'Projected Assets', value:fmt(r.projectedAssetsAtRetirement,cur), color:'#15803d'},
+    {label:'Goal Progress', value:fmtPct(r.goalProgress), color:r.goalProgress>=80?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626'},
+    {label:surplus?'Retirement Surplus':'Retirement Gap', value:fmt(Math.abs(r.retirementGap),cur), color:surplus?'#15803d':'#dc2626'},
+    {label:surplus?'Status':'Monthly Top-Up Needed', value:surplus?'✓ On Track':fmt(r.monthlyTopUp,cur)+'/mo', color:surplus?'#15803d':'#b45309'},
+  ];
+  return {paragraph, stats};
+}
+
+function generateActionPlan(data, r) {
+  const surplus = r.retirementGap <= 0;
+  const cur = data.currency || 'SGD';
+  const steps = [];
+  if (!surplus) {
+    steps.push({step:'Increase Your Monthly Contributions', desc:`Aim to save an additional ${fmt(r.monthlyTopUp,cur)}/month to close the projected retirement gap by age ${data.retirementAge}.`});
+  } else {
+    steps.push({step:'Protect Your Surplus', desc:`You're projected to exceed your retirement goal by ${fmt(Math.abs(r.retirementGap),cur)}. Consider life, critical illness, and long-term care insurance to preserve your projected assets.`});
+  }
+  if (r.goalProgress < 80) {
+    steps.push({step:'Review Your Investment Allocation', desc:`Your pre-retirement return assumption is ${data.preRetirementReturn}%. Consider whether your portfolio is optimally positioned for growth over the next ${r.yearsToRetirement} years.`});
+  }
+  if (!data.cpfLifeMonthly || +data.cpfLifeMonthly < 800) {
+    steps.push({step:'Maximise Your CPF Life Payouts', desc:'Consider topping up your CPF Special Account to grow your retirement income base and benefit from guaranteed, risk-free payouts.'});
+  }
+  if (!(+data.rentalIncome) && !(+data.passiveIncome) && !(+data.businessIncome)) {
+    steps.push({step:'Build a Passive Income Stream', desc:'Diversifying into income-generating assets — REITs, dividend portfolios, or rental property — can reduce reliance on savings drawdown in retirement.'});
+  }
+  steps.push({step:'Review Your Retirement Lifestyle Assumptions', desc:`Your monthly lifestyle budget of ${fmt(r.currentMonthlyNeed,cur)} will rise to approximately ${fmt(r.futureMonthlyNeed,cur)} at retirement due to inflation. Confirm this aligns with your expected lifestyle.`});
+  steps.push({step:'Schedule an Annual Review', desc:'Life circumstances change — income, expenses, family, and markets all evolve. Set a reminder to revisit this plan annually or after any major life event.'});
+  return steps.slice(0,5);
+}
+
+// ─── Expense Breakdown Chart ───────────────────────────────────────────────────────
+
+const ExpenseBreakdownChart = ({expenses, currency}) => {
+  const LABELS = {food:'Food & Dining',utilities:'Utilities',transport:'Transport',housing:'Housing',healthcare:'Healthcare',leisure:'Leisure & Entertainment',personal:'Personal Care',travel:'Travel',family:'Family & Dependents',other:'Other Expenses'};
+  const COLORS = ['#15803d','#0369a1','#b45309','#7c3aed','#be123c','#0f766e','#c2410c','#4338ca','#0e7490','#78716c'];
+  const entries = Object.entries(expenses||{}).filter(([,v])=>+v>0);
+  const total = entries.reduce((s,[,v])=>s+(+v||0),0);
+  if(!total) return React.createElement('p',{style:{fontSize:12,color:'#a8a29e',textAlign:'center',padding:'12px 0'}},'No expenses entered.');
+  return(
+    <div>
+      {entries.map(([key,val],i)=>{
+        const pct = ((+val||0)/total*100);
+        return(
+          <div key={key} style={{marginBottom:9}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+              <div style={{display:'flex',alignItems:'center',gap:7}}>
+                <div style={{width:8,height:8,borderRadius:2,background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                <span style={{fontSize:11,color:'#57534e'}}>{LABELS[key]||key}</span>
+              </div>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <span style={{fontSize:10,color:'#a8a29e'}}>{pct.toFixed(0)}%</span>
+                <span style={{fontSize:12,fontWeight:700,color:'#1c1917',minWidth:72,textAlign:'right'}}>{fmt(+val,currency)}</span>
+              </div>
+            </div>
+            <div style={{height:6,background:'#f5f5f4',borderRadius:99,overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${pct}%`,background:COLORS[i%COLORS.length],borderRadius:99}}/>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',borderTop:'1.5px solid #e7e5e4',paddingTop:10,marginTop:6}}>
+        <span style={{fontSize:12,fontWeight:700,color:'#44403c'}}>Total Monthly</span>
+        <span style={{fontSize:17,fontWeight:800,color:'#1c1917'}}>{fmt(total,currency)}</span>
+      </div>
+    </div>
+  );
+};
+
+// ─── Report Generation Screen ──────────────────────────────────────────────────────
+
+const ReportGenerationScreen = ({data, onGenerate, onBack}) => {
+  const r = useMemo(()=>calcResults(data),[data]);
+  const surplus = r.retirementGap <= 0;
+  const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stepIdx, setStepIdx] = useState(0);
+  const STEPS = ['Calculating retirement timeline…','Projecting asset growth…','Analysing income sources…','Modelling gap scenarios…','Building your report…'];
+
+  const handleGenerate = () => {
+    setGenerating(true);
+    let p = 0;
+    const iv = setInterval(()=>{
+      p += Math.random()*18+7;
+      if(p>=100){p=100;clearInterval(iv);setTimeout(()=>onGenerate(),400);}
+      setProgress(Math.min(100,p));
+      setStepIdx(Math.min(STEPS.length-1, Math.floor((Math.min(100,p)/100)*STEPS.length)));
+    }, 160);
+  };
+
+  return(
+    <div style={{minHeight:'100vh',background:'#F7F6F3',display:'flex',flexDirection:'column'}}>
+      <header style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'12px 20px',display:'flex',alignItems:'center',gap:10}}>
+        <button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',display:'flex'}}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:15,color:'#1c1917'}}>Retirement Life Planner</span>
+      </header>
+      <div style={{maxWidth:600,margin:'0 auto',padding:'40px 20px 80px',width:'100%'}}>
+        {!generating?(
+          <>
+            <div style={{textAlign:'center',marginBottom:32}}>
+              <div style={{width:68,height:68,borderRadius:20,background:'#15803d',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px',boxShadow:'0 8px 24px rgba(21,128,61,0.25)'}}>
+                <span style={{fontSize:34}}>📊</span>
+              </div>
+              <h1 style={{fontFamily:'Georgia,serif',fontSize:26,fontWeight:700,color:'#1c1917',marginBottom:8}}>
+                {data.name?`Great work, ${data.name}.`:'Great work.'} Your plan is ready.
+              </h1>
+              <p style={{fontSize:13,color:'#78716c',lineHeight:1.7}}>Here's a preview of your key numbers before we generate the full report.</p>
+            </div>
+            <div style={{background:'white',borderRadius:20,border:'1px solid #e7e5e4',padding:24,marginBottom:16,boxShadow:'0 2px 8px rgba(0,0,0,0.04)'}}>
+              <div style={{fontSize:10,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:14,fontWeight:700}}>Key Numbers</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                {[
+                  {label:'Monthly Need at Retirement',value:fmt(r.futureMonthlyNeed,data.currency),sub:'future dollars'},
+                  {label:'Total Fund Required',value:fmt(r.simpleTotalFundNeeded,data.currency),sub:'target lump sum'},
+                  {label:'Projected Assets',value:fmt(r.projectedAssetsAtRetirement,data.currency),sub:'at retirement'},
+                  {label:'Goal Progress',value:fmtPct(r.goalProgress),sub:surplus?'on track':'current position',hl:true},
+                ].map(item=>(
+                  <div key={item.label} style={{background:item.hl?(surplus?'#f0fdf4':'#fffbeb'):'#fafaf9',border:`1px solid ${item.hl?(surplus?'#86efac':'#fde68a'):'#e7e5e4'}`,borderRadius:12,padding:'14px 16px'}}>
+                    <div style={{fontSize:10,color:'#a8a29e',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
+                    <div style={{fontWeight:800,fontSize:18,color:item.hl?(surplus?'#15803d':'#b45309'):'#1c1917',marginBottom:2}}>{item.value}</div>
+                    <div style={{fontSize:10,color:'#a8a29e'}}>{item.sub}</div>
+                  </div>
+                ))}
+              </div>
+              {!surplus&&(
+                <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:12,padding:'14px 16px',marginTop:10}}>
+                  <div style={{fontSize:10,color:'#92400e',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em',fontWeight:700}}>Monthly Top-Up Needed</div>
+                  <div style={{fontWeight:800,fontSize:22,color:'#c2410c'}}>{fmt(r.monthlyTopUp,data.currency)}<span style={{fontSize:12,color:'#d97706'}}>/month</span></div>
+                  <div style={{fontSize:10,color:'#78716c',marginTop:3}}>to reach your retirement goal by age {data.retirementAge}</div>
+                </div>
+              )}
+              {surplus&&(
+                <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:12,padding:'14px 16px',marginTop:10}}>
+                  <div style={{fontSize:10,color:'#14532d',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em',fontWeight:700}}>Retirement Surplus</div>
+                  <div style={{fontWeight:800,fontSize:22,color:'#15803d'}}>{fmt(Math.abs(r.retirementGap),data.currency)}</div>
+                  <div style={{fontSize:10,color:'#78716c',marginTop:3}}>projected above your retirement target</div>
+                </div>
+              )}
+            </div>
+            <div style={{background:'#1c1917',borderRadius:16,padding:'18px 20px',marginBottom:16}}>
+              <div style={{fontSize:10,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:10,fontWeight:700}}>Your Full Report Includes</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7}}>
+                {['Executive Summary','Expense Breakdown','Key Assumptions','Gap Analysis','Scenario Comparison','Action Plan','Advisor Guide','Risk & Disclaimer'].map(item=>(
+                  <div key={item} style={{display:'flex',alignItems:'center',gap:7}}>
+                    <div style={{width:14,height:14,borderRadius:'50%',background:'#15803d',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                      <span style={{fontSize:8,color:'white'}}>✓</span>
+                    </div>
+                    <span style={{fontSize:11,color:'#d6d3d1'}}>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button onClick={handleGenerate} style={{width:'100%',padding:'16px',borderRadius:16,border:'none',cursor:'pointer',background:'#15803d',color:'white',fontSize:15,fontWeight:700,boxShadow:'0 4px 14px rgba(21,128,61,0.3)',transition:'all 0.2s'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#166534'}
+              onMouseLeave={e=>e.currentTarget.style.background='#15803d'}>
+              Generate My Retirement Report →
+            </button>
+            <p style={{textAlign:'center',fontSize:11,color:'#a8a29e',marginTop:10}}>Your report will be automatically saved to My Reports</p>
+          </>
+        ):(
+          <div style={{textAlign:'center',padding:'60px 20px'}}>
+            <div style={{width:80,height:80,borderRadius:24,background:'#f0fdf4',border:'2px solid #86efac',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 24px',boxShadow:'0 8px 24px rgba(21,128,61,0.12)'}}>
+              <svg style={{animation:'spin 1s linear infinite'}} width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M21 12a9 9 0 11-6.219-8.56"/>
+              </svg>
+            </div>
+            <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:8}}>Generating Your Report…</h2>
+            <p style={{fontSize:13,color:'#78716c',marginBottom:28}}>{STEPS[stepIdx]}</p>
+            <div style={{height:6,background:'#f5f5f4',borderRadius:99,overflow:'hidden',maxWidth:360,margin:'0 auto 12px'}}>
+              <div style={{height:'100%',width:`${progress}%`,background:'#15803d',borderRadius:99,transition:'width 0.2s ease'}}/>
+            </div>
+            <div style={{fontSize:12,color:'#a8a29e'}}>{Math.round(progress)}%</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Share Modal ──────────────────────────────────────────────────────────────────
 
 const ShareModal = ({data,onClose})=>{
@@ -1005,6 +1387,14 @@ const ReportPage = ({data,onEdit,onSave,onHome,isSaved,onViewSaved})=>{
   const lifestyle=LIFESTYLE_PRESETS[data.lifestyleChoice];
   const showToast=useToast();
   const [showShare,setShowShare]=useState(false);
+  const [extraSavingsPct,setExtraSavingsPct]=useState(20);
+  const [retireYearsLater,setRetireYearsLater]=useState(3);
+
+  const scenB=calcResults({...data,monthlyContribution:Math.round((+(data.monthlyContribution)||0)*(1+extraSavingsPct/100))});
+  const scenC=calcResults({...data,retirementAge:Math.min(75,(+(data.retirementAge)||65)+retireYearsLater)});
+  const execSummary=useMemo(()=>generateExecSummary(data,r),[data,r]);
+  const actionPlan=useMemo(()=>generateActionPlan(data,r),[data,r]);
+  const advisorIns=useMemo(()=>generateAdvisorInsights(data,r),[data,r]);
 
   const exportJSON=()=>{
     const blob=new Blob([JSON.stringify({data,results:r,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});
@@ -1015,22 +1405,21 @@ const ReportPage = ({data,onEdit,onSave,onHome,isSaved,onViewSaved})=>{
     showToast('JSON exported!');
   };
 
-  const Sec=({num,title,children})=>(
-    <Card style={{padding:24,marginBottom:16}}>
-      <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:16}}>
-        <span style={{width:24,height:24,borderRadius:'50%',background:'#f5f5f4',border:'1px solid #e7e5e4',
-          display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#78716c',flexShrink:0}}>{num}</span>
-        <h2 style={{fontFamily:'Georgia,serif',fontSize:17,fontWeight:700,color:'#1c1917'}}>{title}</h2>
+  const RSec=({num,title,className='',children})=>(
+    <div className={`report-section ${className}`} style={{background:'white',borderRadius:16,border:'1px solid #e7e5e4',padding:'24px 28px',marginBottom:20}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20,paddingBottom:14,borderBottom:'1px solid #f5f5f4'}}>
+        <div style={{width:32,height:32,borderRadius:10,background:'#f5f5f4',border:'1px solid #e7e5e4',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#78716c',flexShrink:0}}>{num}</div>
+        <h2 style={{fontFamily:'Georgia,serif',fontSize:17,fontWeight:700,color:'#1c1917',margin:0}}>{title}</h2>
       </div>
       {children}
-    </Card>
+    </div>
   );
 
   return(
     <div style={{minHeight:'100vh',background:'#F7F6F3'}}>
       {showShare&&<ShareModal data={data} onClose={()=>setShowShare(false)}/>}
-      <header className="no-print" style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'12px 20px',
-        display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+
+      <header className="no-print" style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'12px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8,position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
           <button onClick={onHome} style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',display:'flex'}}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -1043,205 +1432,331 @@ const ReportPage = ({data,onEdit,onSave,onHome,isSaved,onViewSaved})=>{
           <Btn onClick={()=>setShowShare(true)} variant="teal" size="sm">🔗 Share</Btn>
           <Btn onClick={onEdit} variant="secondary" size="sm">✏️ Edit</Btn>
           <Btn onClick={exportJSON} variant="ghost" size="sm">JSON</Btn>
-          <Btn onClick={()=>window.print()} variant="ghost" size="sm">🖨 Print</Btn>
+          <Btn onClick={()=>window.print()} variant="ghost" size="sm">🖨 Print / PDF</Btn>
         </div>
       </header>
 
-      <div style={{maxWidth:720,margin:'0 auto',padding:'28px 20px 60px'}}>
-        {/* Header */}
-        <div style={{textAlign:'center',marginBottom:28}}>
-          <div style={{fontSize:10,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:8}}>Retirement Planning Report</div>
-          <h1 style={{fontFamily:'Georgia,serif',fontSize:28,fontWeight:700,color:'#1c1917',marginBottom:4}}>
-            {data.name?`${data.name}'s Retirement Plan`:'Your Retirement Plan'}
-          </h1>
-          <p style={{fontSize:12,color:'#a8a29e'}}>Generated {new Date().toLocaleDateString('en-SG',{year:'numeric',month:'long',day:'numeric'})}</p>
-        </div>
-
-        {/* Banner */}
-        <div style={{background:surplus?'#f0fdf4':r.goalProgress>=70?'#fffbeb':'#fff1f2',
-          border:`1px solid ${surplus?'#86efac':r.goalProgress>=70?'#fde68a':'#fecdd3'}`,
-          borderRadius:16,padding:'16px 20px',marginBottom:20,
-          display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
+      <div style={{maxWidth:800,margin:'0 auto',padding:'0 20px 80px'}}>
+        {/* ── Cover Page ── */}
+        <div className="report-cover" style={{background:'linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#14532d 100%)',borderRadius:20,padding:'44px 40px',marginTop:24,marginBottom:20,color:'white',minHeight:280,display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
           <div>
-            <div style={{fontSize:12,fontWeight:700,color:surplus?'#14532d':r.goalProgress>=70?'#92400e':'#be123c'}}>
-              {surplus?'🎉 You have a retirement surplus':'You currently have a retirement gap to work on — and here are the key areas to strengthen'}
+            <div style={{display:'inline-flex',alignItems:'center',gap:6,background:'rgba(21,128,61,0.3)',border:'1px solid rgba(34,197,94,0.35)',borderRadius:99,padding:'4px 12px',marginBottom:24}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:'#22c55e'}}/>
+              <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.1em',color:'#86efac'}}>RETIREMENT LIFE PLAN</span>
             </div>
-            <div style={{fontSize:11,color:'#78716c',marginTop:2}}>
-              {surplus?`You're projected to exceed your retirement goal by ${fmt(Math.abs(r.retirementGap),data.currency)}.`
-                :`You're ${fmtPct(r.goalProgress)} of the way to your retirement goal.`}
-            </div>
+            <h1 style={{fontFamily:'Georgia,serif',fontSize:32,fontWeight:700,lineHeight:1.2,marginBottom:8,color:'white'}}>
+              {data.name?`${data.name}'s Retirement Life Plan`:'Your Retirement Life Plan'}
+            </h1>
+            <p style={{fontSize:13,color:'#94a3b8',margin:0}}>Prepared {new Date().toLocaleDateString('en-SG',{year:'numeric',month:'long',day:'numeric'})}</p>
           </div>
-          <DonutChart progress={r.goalProgress} size={80}/>
-        </div>
-
-        {/* 1 */}
-        <Sec num="1" title="Retirement Lifestyle Summary">
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:14}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginTop:32}}>
             {[
-              {label:'Lifestyle Choice',value:lifestyle?.label||'Custom'},
+              {label:'Lifestyle Target',value:lifestyle?.label||'Custom'},
               {label:'Retirement Age',value:`Age ${data.retirementAge}`},
-              {label:'Planning Until',value:`Age ${data.planningAge}`},
-              {label:'Retirement Duration',value:`${r.retirementDuration} years`},
+              {label:'Planning Horizon',value:`Age ${data.planningAge}`},
             ].map(item=>(
-              <div key={item.label} style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,padding:'12px 14px'}}>
-                <div style={{fontSize:10,color:'#a8a29e',marginBottom:3,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
-                <div style={{fontWeight:700,fontSize:14,color:'#1c1917'}}>{item.value}</div>
+              <div key={item.label} style={{borderTop:'1px solid rgba(255,255,255,0.1)',paddingTop:14}}>
+                <div style={{fontSize:9,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>{item.label}</div>
+                <div style={{fontSize:15,fontWeight:700,color:'white'}}>{item.value}</div>
               </div>
             ))}
           </div>
-          <div style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:12,padding:'14px 16px',
-            display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
+        </div>
+
+        {/* ── 1. Executive Summary ── */}
+        <RSec num="1" title="Executive Summary">
+          <p style={{fontSize:13,color:'#44403c',lineHeight:1.85,marginBottom:20,paddingBottom:16,borderBottom:'1px solid #f5f5f4'}}>{execSummary.paragraph}</p>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+            {execSummary.stats.map(stat=>(
+              <div key={stat.label} style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{fontSize:9,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>{stat.label}</div>
+                <div style={{fontWeight:800,fontSize:15,color:stat.color}}>{stat.value}</div>
+              </div>
+            ))}
+          </div>
+        </RSec>
+
+        {/* ── 2. Retirement Lifestyle Summary ── */}
+        <RSec num="2" title="Retirement Lifestyle Summary">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}}>
+            {[
+              {label:'Lifestyle Target',value:lifestyle?.label||'Custom'},
+              {label:'Retirement Duration',value:`${r.retirementDuration} years`},
+              {label:'Monthly Cost Today',value:fmt(r.currentMonthlyNeed,data.currency)},
+              {label:'Monthly Cost at Retirement',value:fmt(r.futureMonthlyNeed,data.currency),hl:true},
+            ].map(item=>(
+              <div key={item.label} style={{background:item.hl?'#fff7ed':'#fafaf9',border:`1px solid ${item.hl?'#fed7aa':'#e7e5e4'}`,borderRadius:10,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'#a8a29e',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
+                <div style={{fontWeight:700,fontSize:14,color:item.hl?'#c2410c':'#1c1917'}}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{fontWeight:700,fontSize:12,color:'#44403c',marginBottom:12}}>Monthly Expense Breakdown</div>
+          <ExpenseBreakdownChart expenses={data.expenses} currency={data.currency}/>
+        </RSec>
+
+        {/* ── 3. Key Assumptions ── */}
+        <RSec num="3" title="Key Assumptions">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            {[
+              {label:'Current Age',value:`${data.currentAge} years old`},
+              {label:'Retirement Age',value:`Age ${data.retirementAge}`},
+              {label:'Planning Horizon',value:`Age ${data.planningAge}`},
+              {label:'Marital Status',value:(data.maritalStatus||'single').charAt(0).toUpperCase()+(data.maritalStatus||'single').slice(1)},
+              {label:'Inflation Rate',value:`${data.inflationRate}% p.a.`},
+              {label:'Pre-Retirement Return',value:`${data.preRetirementReturn}% p.a.`},
+              {label:'Portfolio Return (Retirement)',value:`${data.portfolioReturnDuringRetirement}% p.a.`},
+              {label:'Withdrawal Strategy',value:(data.withdrawalStrategy||'balanced').charAt(0).toUpperCase()+(data.withdrawalStrategy||'balanced').slice(1)},
+            ].map(item=>(
+              <div key={item.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:8,padding:'10px 14px'}}>
+                <span style={{fontSize:11,color:'#78716c'}}>{item.label}</span>
+                <span style={{fontSize:12,fontWeight:700,color:'#1c1917'}}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </RSec>
+
+        {/* ── 4. Current Retirement Position ── */}
+        <RSec num="4" title="Current Retirement Position">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
             <div>
-              <div style={{fontSize:10,color:'#a8a29e',marginBottom:3}}>Monthly Lifestyle Cost — Today</div>
-              <div style={{fontWeight:800,fontSize:18,color:'#1c1917'}}>{fmt(r.currentMonthlyNeed,data.currency)}</div>
-            </div>
-            <div style={{color:'#d6d3d1',fontSize:22}}>→</div>
-            <div style={{textAlign:'right'}}>
-              <div style={{fontSize:10,color:'#a8a29e',marginBottom:3}}>Future Monthly Cost at Retirement</div>
-              <div style={{fontWeight:800,fontSize:18,color:'#b45309'}}>{fmt(r.futureMonthlyNeed,data.currency)}</div>
-            </div>
-          </div>
-        </Sec>
-
-        {/* 2 */}
-        <Sec num="2" title="Your Retirement Number">
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-            <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:14,padding:20,textAlign:'center'}}>
-              <div style={{fontSize:10,color:'#78716c',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Monthly Income Needed at Retirement</div>
-              <div style={{fontWeight:800,fontSize:24,color:'#15803d'}}>{fmt(r.futureMonthlyNeed,data.currency)}</div>
-              <div style={{fontSize:10,color:'#a8a29e',marginTop:3}}>per month</div>
-            </div>
-            <div style={{background:'#1c1917',borderRadius:14,padding:20,textAlign:'center'}}>
-              <div style={{fontSize:10,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Total Retirement Fund Needed</div>
-              <div style={{fontWeight:800,fontSize:24,color:'white'}}>{fmt(r.simpleTotalFundNeeded,data.currency)}</div>
-              <div style={{fontSize:10,color:'#78716c',marginTop:3}}>total lump sum</div>
-            </div>
-          </div>
-        </Sec>
-
-        {/* 3 */}
-        <Sec num="3" title="Your Current Position">
-          <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'center',marginBottom:16}}>
-            <div style={{flexShrink:0}}><DonutChart progress={r.goalProgress} size={140}/></div>
-            <div style={{flex:1,minWidth:180,display:'flex',flexDirection:'column',gap:7}}>
+              <div style={{fontSize:11,fontWeight:700,color:'#44403c',marginBottom:8}}>Retirement Assets</div>
               {[
-                {label:'Current Retirement Assets',value:fmt(r.totalCurrentAssets,data.currency)},
-                {label:'Growth from Existing Assets',value:fmt(r.fvCurrentAssets,data.currency)},
-                {label:'Growth from Monthly Contributions',value:fmt(r.fvMonthlyContributions,data.currency)},
-                {label:'Projected Assets at Retirement',value:fmt(r.projectedAssetsAtRetirement,data.currency),hl:true},
-                {label:'Fixed Monthly Income Sources',value:fmt(r.monthlyRetirementIncome,data.currency)},
-                {label:'Total Projected Monthly Income',value:fmt(r.totalProjectedMonthlyIncome,data.currency),hl:true},
+                {label:'Cash Savings',value:data.currentCashSavings},
+                {label:'Investments',value:data.currentInvestments},
+                {label:'CPF Balances',value:data.currentCPF},
+                {label:'Retirement Plans',value:data.currentRetirementPlans},
               ].map(item=>(
-                <div key={item.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
-                  background:item.hl?'#f0fdf4':'#fafaf9',border:`1px solid ${item.hl?'#bbf7d0':'#e7e5e4'}`,
-                  borderRadius:8,padding:'7px 10px'}}>
-                  <span style={{fontSize:11,color:'#57534e'}}>{item.label}</span>
-                  <span style={{fontSize:12,fontWeight:700,color:item.hl?'#15803d':'#1c1917'}}>{item.value}</span>
+                <div key={item.label} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #f5f5f4'}}>
+                  <span style={{fontSize:11,color:'#78716c'}}>{item.label}</span>
+                  <span style={{fontSize:12,fontWeight:600,color:'#1c1917'}}>{fmt(+(item.value)||0,data.currency)}</span>
                 </div>
               ))}
+              <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0',borderTop:'2px solid #e7e5e4',marginTop:4}}>
+                <span style={{fontSize:11,fontWeight:700,color:'#44403c'}}>Total Assets</span>
+                <span style={{fontSize:13,fontWeight:800,color:'#15803d'}}>{fmt(r.totalCurrentAssets,data.currency)}</span>
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:'#44403c',marginBottom:8}}>Monthly Retirement Income</div>
+              {[
+                {label:'CPF Life',value:data.cpfLifeMonthly},
+                {label:'Rental Income',value:data.rentalIncome},
+                {label:'Business Income',value:data.businessIncome},
+                {label:'Passive Income',value:data.passiveIncome},
+                {label:'Other Income',value:data.otherRetirementIncome},
+              ].map(item=>(
+                <div key={item.label} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #f5f5f4'}}>
+                  <span style={{fontSize:11,color:'#78716c'}}>{item.label}</span>
+                  <span style={{fontSize:12,fontWeight:600,color:'#1c1917'}}>{fmt(+(item.value)||0,data.currency)}</span>
+                </div>
+              ))}
+              <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0',borderTop:'2px solid #e7e5e4',marginTop:4}}>
+                <span style={{fontSize:11,fontWeight:700,color:'#44403c'}}>Total Monthly</span>
+                <span style={{fontSize:13,fontWeight:800,color:'#15803d'}}>{fmt(r.monthlyRetirementIncome,data.currency)}</span>
+              </div>
             </div>
           </div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-            <span style={{fontSize:12,color:'#78716c'}}>Progress to Retirement Goal</span>
-            <span style={{fontSize:13,fontWeight:700,color:r.goalProgress>=80?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(r.goalProgress)}</span>
+          <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:12,padding:'14px 18px',marginTop:16,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+            <div>
+              <div style={{fontSize:10,color:'#78716c',marginBottom:3}}>Projected Assets at Retirement</div>
+              <div style={{fontWeight:800,fontSize:20,color:'#15803d'}}>{fmt(r.projectedAssetsAtRetirement,data.currency)}</div>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:'#78716c',marginBottom:3}}>Monthly Contributions</div>
+              <div style={{fontWeight:700,fontSize:14,color:'#1c1917'}}>{fmt(+(data.monthlyContribution)||0,data.currency)}/mo</div>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:'#78716c',marginBottom:3}}>Years to Retirement</div>
+              <div style={{fontWeight:700,fontSize:14,color:'#1c1917'}}>{r.yearsToRetirement} yrs</div>
+            </div>
           </div>
-          <ProgressBar value={r.goalProgress} max={100} color={barColor}/>
-        </Sec>
+        </RSec>
 
-        {/* 4 */}
-        <Sec num="4" title="Gap Analysis">
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:surplus?0:14}}>
-            {[
-              {label:'Retirement Fund Target',value:fmt(r.simpleTotalFundNeeded,data.currency)},
-              {label:'Projected Assets at Retirement',value:fmt(r.projectedAssetsAtRetirement,data.currency),hl:true},
-              {label:surplus?'Retirement Surplus':'Retirement Fund Gap',value:fmt(Math.abs(r.retirementGap),data.currency),hl:surplus,am:!surplus},
-              {label:'Years Available',value:`${r.yearsToRetirement} years`},
-            ].map(item=>(
-              <div key={item.label} style={{background:item.hl?'#f0fdf4':item.am?'#fffbeb':'#fafaf9',
-                border:`1px solid ${item.hl?'#bbf7d0':item.am?'#fde68a':'#e7e5e4'}`,borderRadius:10,padding:'12px 14px'}}>
-                <div style={{fontSize:10,color:'#a8a29e',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
-                <div style={{fontWeight:800,fontSize:14,color:item.hl?'#15803d':item.am?'#b45309':'#1c1917'}}>{item.value}</div>
+        {/* ── 5. Gap Analysis ── */}
+        <RSec num="5" title="Retirement Gap Analysis">
+          <div style={{display:'flex',gap:20,alignItems:'center',flexWrap:'wrap',marginBottom:20}}>
+            <div style={{flexShrink:0}}><DonutChart progress={r.goalProgress} size={130}/></div>
+            <div style={{flex:1,minWidth:180}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:12,color:'#78716c'}}>Progress to Goal</span>
+                <span style={{fontSize:14,fontWeight:800,color:r.goalProgress>=80?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(r.goalProgress)}</span>
               </div>
-            ))}
+              <ProgressBar value={r.goalProgress} max={100} color={barColor}/>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:14}}>
+                {[
+                  {label:'Fund Target',value:fmt(r.simpleTotalFundNeeded,data.currency)},
+                  {label:'Projected Assets',value:fmt(r.projectedAssetsAtRetirement,data.currency),green:true},
+                  {label:surplus?'Surplus':'Gap',value:fmt(Math.abs(r.retirementGap),data.currency),green:surplus,amber:!surplus},
+                  {label:'Monthly Income Gap',value:fmt(Math.max(0,r.monthlyIncomeGap),data.currency),amber:!surplus&&r.monthlyIncomeGap>0},
+                ].map(item=>(
+                  <div key={item.label} style={{background:item.green?'#f0fdf4':item.amber?'#fffbeb':'#fafaf9',border:`1px solid ${item.green?'#bbf7d0':item.amber?'#fde68a':'#e7e5e4'}`,borderRadius:8,padding:'8px 10px'}}>
+                    <div style={{fontSize:9,color:'#a8a29e',marginBottom:3,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
+                    <div style={{fontWeight:700,fontSize:12,color:item.green?'#15803d':item.amber?'#b45309':'#1c1917'}}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
           {!surplus&&(
-            <div style={{background:'#fffbeb',border:'2px solid #fde68a',borderRadius:14,padding:20,textAlign:'center'}}>
-              <div style={{fontSize:10,color:'#92400e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Estimated Additional Monthly Savings Needed</div>
-              <div style={{fontWeight:800,fontSize:28,color:'#b45309'}}>{fmt(r.monthlyTopUp,data.currency)}<span style={{fontSize:14,color:'#d97706'}}>/month</span></div>
-              <div style={{fontSize:10,color:'#78716c',marginTop:6}}>to close the gap by age {data.retirementAge}, assuming {data.preRetirementReturn}% annual return</div>
+            <div style={{background:'linear-gradient(135deg,#fffbeb,#fef3c7)',border:'2px solid #fde68a',borderRadius:16,padding:20,textAlign:'center'}}>
+              <div style={{fontSize:10,color:'#92400e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6,fontWeight:700}}>Estimated Additional Monthly Savings Needed</div>
+              <div style={{fontWeight:800,fontSize:30,color:'#b45309'}}>{fmt(r.monthlyTopUp,data.currency)}<span style={{fontSize:14,color:'#d97706'}}>/month</span></div>
+              <div style={{fontSize:11,color:'#78716c',marginTop:6}}>to close the gap by age {data.retirementAge}, assuming {data.preRetirementReturn}% pre-retirement return</div>
             </div>
           )}
-        </Sec>
+          {surplus&&(
+            <div style={{background:'linear-gradient(135deg,#f0fdf4,#dcfce7)',border:'2px solid #86efac',borderRadius:16,padding:20,textAlign:'center'}}>
+              <div style={{fontSize:10,color:'#14532d',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6,fontWeight:700}}>Retirement Surplus</div>
+              <div style={{fontWeight:800,fontSize:30,color:'#15803d'}}>{fmt(Math.abs(r.retirementGap),data.currency)}</div>
+              <div style={{fontSize:11,color:'#78716c',marginTop:6}}>projected above your retirement target — you're on track!</div>
+            </div>
+          )}
+        </RSec>
 
-        {/* 5 */}
-        <Sec num="5" title="Planning Focus Areas">
-          <div style={{fontSize:12,fontWeight:700,color:'#44403c',marginBottom:12}}>{focus.heading}</div>
-          <ul style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:8}}>
+        {/* ── 6. Scenario Comparison ── */}
+        <RSec num="6" title="Scenario Comparison" className="report-section-break">
+          <p style={{fontSize:12,color:'#78716c',marginBottom:16,lineHeight:1.6}}>Explore how small changes to your plan can meaningfully impact your retirement outcome. Adjust the sliders to see different scenarios.</p>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+            <div style={{border:'2px solid #e7e5e4',borderRadius:16,padding:16}}>
+              <div style={{fontSize:9,color:'#a8a29e',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Scenario A</div>
+              <div style={{fontSize:13,fontWeight:700,color:'#1c1917',marginBottom:14}}>Current Path</div>
+              <div style={{fontSize:10,color:'#78716c',marginBottom:2}}>Monthly contribution</div>
+              <div style={{fontSize:14,fontWeight:700,color:'#1c1917',marginBottom:10}}>{fmt(+(data.monthlyContribution)||0,data.currency)}/mo</div>
+              <div style={{fontSize:10,color:'#78716c',marginBottom:2}}>Retirement age</div>
+              <div style={{fontSize:14,fontWeight:700,color:'#1c1917',marginBottom:14}}>Age {data.retirementAge}</div>
+              <ProgressBar value={r.goalProgress} max={100} color={barColor}/>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:7}}>
+                <span style={{fontSize:10,color:'#78716c'}}>Progress</span>
+                <span style={{fontSize:12,fontWeight:800,color:r.goalProgress>=80?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(r.goalProgress)}</span>
+              </div>
+              <div style={{fontSize:10,color:'#a8a29e',marginTop:7}}>Projected: {fmt(r.projectedAssetsAtRetirement,data.currency)}</div>
+            </div>
+            <div style={{border:'2px solid #bfdbfe',borderRadius:16,padding:16,background:'#eff6ff'}}>
+              <div style={{fontSize:9,color:'#1d4ed8',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Scenario B</div>
+              <div style={{fontSize:13,fontWeight:700,color:'#1e3a8a',marginBottom:14}}>Save More</div>
+              <div style={{fontSize:10,color:'#4b5563',marginBottom:4}}>Extra savings</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                <input type="range" min={5} max={50} value={extraSavingsPct} onChange={e=>setExtraSavingsPct(+e.target.value)} style={{flex:1,accentColor:'#1d4ed8'}}/>
+                <span style={{fontSize:12,fontWeight:700,color:'#1d4ed8',minWidth:36}}>+{extraSavingsPct}%</span>
+              </div>
+              <div style={{fontSize:10,color:'#4b5563',marginBottom:2}}>New monthly</div>
+              <div style={{fontSize:14,fontWeight:700,color:'#1e3a8a',marginBottom:14}}>{fmt(Math.round((+(data.monthlyContribution)||0)*(1+extraSavingsPct/100)),data.currency)}/mo</div>
+              <ProgressBar value={scenB.goalProgress} max={100} color={scenB.goalProgress>=80?'green':scenB.goalProgress>=50?'amber':'red'}/>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:7}}>
+                <span style={{fontSize:10,color:'#4b5563'}}>Progress</span>
+                <span style={{fontSize:12,fontWeight:800,color:scenB.goalProgress>=80?'#15803d':scenB.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(scenB.goalProgress)}</span>
+              </div>
+              <div style={{fontSize:10,color:'#6b7280',marginTop:7}}>Projected: {fmt(scenB.projectedAssetsAtRetirement,data.currency)}</div>
+            </div>
+            <div style={{border:'2px solid #d8b4fe',borderRadius:16,padding:16,background:'#faf5ff'}}>
+              <div style={{fontSize:9,color:'#7e22ce',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Scenario C</div>
+              <div style={{fontSize:13,fontWeight:700,color:'#581c87',marginBottom:14}}>Retire Later</div>
+              <div style={{fontSize:10,color:'#4b5563',marginBottom:4}}>Extra years</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                <input type="range" min={1} max={10} value={retireYearsLater} onChange={e=>setRetireYearsLater(+e.target.value)} style={{flex:1,accentColor:'#7e22ce'}}/>
+                <span style={{fontSize:12,fontWeight:700,color:'#7e22ce',minWidth:36}}>+{retireYearsLater}yr</span>
+              </div>
+              <div style={{fontSize:10,color:'#4b5563',marginBottom:2}}>New retirement age</div>
+              <div style={{fontSize:14,fontWeight:700,color:'#581c87',marginBottom:14}}>Age {Math.min(75,(+(data.retirementAge)||65)+retireYearsLater)}</div>
+              <ProgressBar value={scenC.goalProgress} max={100} color={scenC.goalProgress>=80?'green':scenC.goalProgress>=50?'amber':'red'}/>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:7}}>
+                <span style={{fontSize:10,color:'#4b5563'}}>Progress</span>
+                <span style={{fontSize:12,fontWeight:800,color:scenC.goalProgress>=80?'#15803d':scenC.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(scenC.goalProgress)}</span>
+              </div>
+              <div style={{fontSize:10,color:'#6b7280',marginTop:7}}>Projected: {fmt(scenC.projectedAssetsAtRetirement,data.currency)}</div>
+            </div>
+          </div>
+        </RSec>
+
+        {/* ── 7. Planning Focus Areas ── */}
+        <RSec num="7" title="Planning Focus Areas">
+          <div style={{background:focus.tone==='surplus'?'#f0fdf4':focus.tone==='near'?'#eff6ff':'#fffbeb',borderRadius:12,padding:'12px 16px',marginBottom:14,border:`1px solid ${focus.tone==='surplus'?'#bbf7d0':focus.tone==='near'?'#bfdbfe':'#fde68a'}`}}>
+            <div style={{fontSize:12,fontWeight:700,color:focus.tone==='surplus'?'#14532d':focus.tone==='near'?'#1e40af':'#92400e'}}>{focus.heading}</div>
+          </div>
+          <ul style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:10}}>
             {focus.areas.map((area,i)=>(
               <li key={i} style={{display:'flex',alignItems:'flex-start',gap:10}}>
-                <span style={{width:22,height:22,borderRadius:'50%',
-                  background:focus.tone==='surplus'?'#dcfce7':focus.tone==='near'?'#dbeafe':'#fef9c3',
-                  color:focus.tone==='surplus'?'#15803d':focus.tone==='near'?'#1d4ed8':'#92400e',
-                  fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>
-                  {i+1}
-                </span>
+                <span style={{width:24,height:24,borderRadius:'50%',background:focus.tone==='surplus'?'#dcfce7':focus.tone==='near'?'#dbeafe':'#fef9c3',color:focus.tone==='surplus'?'#15803d':focus.tone==='near'?'#1d4ed8':'#92400e',fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>{i+1}</span>
                 <span style={{fontSize:13,color:'#44403c',lineHeight:1.6}}>{area}</span>
               </li>
             ))}
           </ul>
-        </Sec>
+        </RSec>
 
-        {/* 6 */}
-        <Card style={{background:'#fafaf9',padding:20,marginBottom:16}}>
-          <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
-            <span style={{fontSize:16,flexShrink:0}}>ℹ️</span>
-            <div>
-              <div style={{fontSize:12,fontWeight:700,color:'#44403c',marginBottom:4}}>Important Reminder</div>
-              <p style={{fontSize:11,color:'#78716c',lineHeight:1.7,margin:0}}>
-                This estimate is for planning purposes only. Actual retirement needs may change depending on inflation, investment returns, healthcare costs, family responsibilities, policy changes, and lifestyle changes. We recommend reviewing your plan at least once a year, or whenever there is a significant life event. Consider working with a licensed financial adviser for personalised guidance.
-              </p>
-            </div>
+        {/* ── 8. Advisor Conversation Guide ── */}
+        <RSec num="8" title="Advisor Conversation Guide" className="report-section-break">
+          <div style={{background:'#0f172a',borderRadius:10,padding:'14px 18px',marginBottom:16}}>
+            <p style={{fontSize:11,color:'#94a3b8',lineHeight:1.7,margin:0}}>The following guide supports advisor-led conversations. It is based on the client's plan inputs and is designed to complement — not replace — your professional judgment. It does not constitute financial advice.</p>
           </div>
-        </Card>
-
-        {/* 7 */}
-        <Sec num="7" title="Suggested Next Steps">
-          <ol style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:10}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             {[
-              'Confirm your desired retirement lifestyle and review your monthly expense estimates',
-              'Review your current retirement income sources and projected growth trajectory',
-              'Identify your retirement income gap and decide on a concrete contribution strategy',
-              'Set up or increase your monthly retirement savings and investment contributions',
-              'Review this plan at least once a year or after any major life change',
-            ].map((step,i)=>(
-              <li key={i} style={{display:'flex',alignItems:'flex-start',gap:12}}>
-                <span style={{width:24,height:24,borderRadius:'50%',background:'#1c1917',color:'white',
-                  fontSize:11,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>
-                  {i+1}
-                </span>
-                <span style={{fontSize:13,color:'#44403c',lineHeight:1.6}}>{step}</span>
-              </li>
-            ))}
-          </ol>
-        </Sec>
-
-        {/* Assumptions */}
-        <Card style={{background:'#fafaf9',padding:20}}>
-          <div style={{fontSize:11,fontWeight:700,color:'#57534e',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.06em'}}>Key Assumptions Used</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
-            {[
-              {label:'Inflation Rate',value:`${data.inflationRate}%`},
-              {label:'Pre-Retirement Return',value:`${data.preRetirementReturn}%`},
-              {label:'Portfolio Return (Retirement)',value:`${data.portfolioReturnDuringRetirement}%`},
-              {label:'Withdrawal Strategy',value:data.withdrawalStrategy},
-            ].map(item=>(
-              <div key={item.label} style={{background:'white',border:'1px solid #e7e5e4',borderRadius:8,padding:'10px 8px',textAlign:'center'}}>
-                <div style={{fontSize:9,color:'#a8a29e',marginBottom:3}}>{item.label}</div>
-                <div style={{fontSize:12,fontWeight:700,color:'#44403c',textTransform:'capitalize'}}>{item.value}</div>
+              {title:'Key Observations',emoji:'🔍',items:advisorIns.observations,bg:'#f0f9ff',border:'#bae6fd',tc:'#0c4a6e',tc2:'#0369a1',quote:false},
+              {title:'Possible Concerns',emoji:'⚠️',items:advisorIns.concerns,bg:'#fffbeb',border:'#fde68a',tc:'#451a03',tc2:'#78350f',quote:false},
+              {title:'Conversation Starters',emoji:'💬',items:advisorIns.questions,bg:'#f0fdf4',border:'#bbf7d0',tc:'#14532d',tc2:'#166534',quote:true},
+              {title:'Planning Opportunities',emoji:'🌱',items:advisorIns.opportunities,bg:'#faf5ff',border:'#e9d5ff',tc:'#3b0764',tc2:'#6b21a8',quote:false},
+            ].map(cat=>(
+              <div key={cat.title} style={{background:cat.bg,border:`1px solid ${cat.border}`,borderRadius:12,padding:16}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+                  <span>{cat.emoji}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:cat.tc}}>{cat.title}</span>
+                </div>
+                {cat.items.map((item,i)=>(
+                  <div key={i} style={{display:'flex',gap:8,marginBottom:8}}>
+                    <span style={{fontSize:10,fontWeight:700,color:cat.tc,flexShrink:0,marginTop:2}}>{i+1}.</span>
+                    <span style={{fontSize:11,color:cat.tc2,lineHeight:1.65,fontStyle:cat.quote?'italic':'normal',borderLeft:cat.quote?`2px solid ${cat.border}`:'none',paddingLeft:cat.quote?8:0}}>{item}</span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
-        </Card>
+        </RSec>
+
+        {/* ── 9. Action Plan ── */}
+        <RSec num="9" title="Your Action Plan">
+          <ol style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:12}}>
+            {actionPlan.map((item,i)=>(
+              <li key={i} style={{display:'flex',alignItems:'flex-start',gap:14,background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:12,padding:16}}>
+                <span style={{width:28,height:28,borderRadius:'50%',background:'#1c1917',color:'white',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>{i+1}</span>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:'#1c1917',marginBottom:3}}>{item.step}</div>
+                  <div style={{fontSize:12,color:'#78716c',lineHeight:1.65}}>{item.desc}</div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </RSec>
+
+        {/* ── 10. Risk & Disclaimer ── */}
+        <div className="report-section" style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:16,padding:'20px 24px',marginBottom:20}}>
+          <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
+            <span style={{fontSize:18,flexShrink:0}}>ℹ️</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#44403c',marginBottom:8}}>Important Disclaimer</div>
+              <p style={{fontSize:11,color:'#78716c',lineHeight:1.8,margin:0}}>
+                This retirement plan is generated for illustrative and planning purposes only. It does not constitute financial, investment, legal, or tax advice. All projections are based on user-supplied inputs and mathematical models using assumed rates of return and inflation — actual outcomes will differ. Past market performance does not guarantee future results.
+              </p>
+              <p style={{fontSize:11,color:'#78716c',lineHeight:1.8,margin:'8px 0 0'}}>
+                We recommend reviewing this plan at least annually and consulting a licensed financial adviser for personalised guidance tailored to your specific situation, goals, and risk tolerance.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Export/Save Footer ── */}
+        <div className="no-print" style={{background:'white',borderRadius:16,border:'1px solid #e7e5e4',padding:'20px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:'#1c1917',marginBottom:2}}>Export & Save</div>
+            <div style={{fontSize:11,color:'#a8a29e'}}>Download or share this retirement report</div>
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {!isSaved&&<Btn onClick={onSave}>💾 Save to My Reports</Btn>}
+            <Btn onClick={()=>setShowShare(true)} variant="teal">🔗 Share</Btn>
+            <Btn onClick={exportJSON} variant="secondary">JSON</Btn>
+            <Btn onClick={()=>window.print()} variant="secondary">🖨 Print / PDF</Btn>
+          </div>
+        </div>
+
       </div>
     </div>
   );
@@ -1495,7 +2010,11 @@ const App = ()=>{
   return(
     <ToastProvider>
       {page==='welcome'&&<WelcomePage onStart={()=>{setFormData({...DEFAULT_STATE});setViewingReport(null);nav('questionnaire');}} savedCount={reports.length} onViewSaved={()=>nav('saved')}/>}
-      {page==='questionnaire'&&<QuestionnairePage data={formData} setData={setFormData} onComplete={()=>nav('report')} onBack={()=>nav('welcome')}/>}
+      {page==='questionnaire'&&<QuestionnairePage data={formData} setData={setFormData} onComplete={()=>nav('generate')} onBack={()=>nav('welcome')}/>}
+      {page==='generate'&&<ReportGenerationScreen data={formData} onGenerate={()=>{
+        const report={id:Date.now().toString(),savedAt:new Date().toISOString(),data:{...formData}};
+        setReports(prev=>[report,...prev]);setViewingReport(report);nav('report');
+      }} onBack={()=>nav('questionnaire')}/>}
       {page==='report'&&<ReportPage data={reportData} onEdit={()=>{if(viewingReport)setFormData({...viewingReport.data});nav('questionnaire');}} onSave={saveReport} onHome={()=>nav('welcome')} isSaved={!!viewingReport} onViewSaved={()=>nav('saved')}/>}
       {page==='saved'&&<SavedReportsPage reports={reports}
         onView={r=>{setViewingReport(r);nav('report');}}
