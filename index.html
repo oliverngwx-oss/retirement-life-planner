@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Retirement Life Planner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { serif: ['Georgia','Cambria','"Times New Roman"','serif'] } } }
+    }
+    /* ── Shared plan data (replaced when a plan is exported as a shareable file) ── */
+    window.__SHARED_PLAN__ = null;
+    /* ── Cache page HTML on load for shareable file export ── */
+    window.__PAGE_TEMPLATE__ = null;
+    window.addEventListener('load', function() {
+      fetch(window.location.href)
+        .then(function(r){ return r.text(); })
+        .then(function(html){ window.__PAGE_TEMPLATE__ = html; })
+        .catch(function(){});
+    });
+  </script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    body{background:#F7F6F3;font-family:system-ui,-apple-system,sans-serif;margin:0}
+    .tooltip-wrap{position:relative;display:inline-flex}
+    .tooltip-box{visibility:hidden;opacity:0;background:#1c1917;color:#e7e5e4;padding:6px 10px;
+      border-radius:6px;font-size:11px;line-height:1.5;position:absolute;bottom:calc(100% + 6px);
+      left:50%;transform:translateX(-50%);white-space:normal;z-index:200;width:200px;text-align:center;
+      transition:opacity 0.15s;pointer-events:none}
+    .tooltip-wrap:hover .tooltip-box{visibility:visible;opacity:1}
+    .slide-in{animation:slideIn 0.25s ease-out}
+    @keyframes slideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:1}
+    .progress-bar-fill{transition:width 0.8s cubic-bezier(0.4,0,0.2,1)}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#f5f5f4}
+    ::-webkit-scrollbar-thumb{background:#d6d3d1;border-radius:3px}
+    @keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes toastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(20px)}}
+    .toast-in{animation:toastIn 0.3s ease-out forwards}
+    .toast-out{animation:toastOut 0.3s ease-in forwards}
+    @media print{
+      .no-print{display:none!important}
+      body{background:white}
+      .print-card{box-shadow:none!important;border:1px solid #e7e5e4!important}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ─── Constants ─────────────────────────────────────────────────────────────────
+
+const LIFESTYLE_PRESETS = {
+  basic:{
+    label:'Basic & Simple', tagline:'Modest and mindful', icon:'🌱',
+    description:'A modest lifestyle focused on essentials — simple meals, public transport, and low discretionary spending.',
+    expenses:{food:400,utilities:150,transport:150,housing:500,insurance:200,healthcare:300,familySupport:100,hobbies:100,travel:100,dining:100,helper:0,gifts:50,emergency:100,other:100}
+  },
+  comfortable:{
+    label:'Comfortable', tagline:'Well-rounded and content', icon:'🏡',
+    description:'A good standard of living — enjoy hobbies, dine out occasionally, travel sometimes, and not worry about daily expenses.',
+    expenses:{food:600,utilities:200,transport:300,housing:800,insurance:300,healthcare:400,familySupport:300,hobbies:200,travel:300,dining:300,helper:0,gifts:100,emergency:200,other:200}
+  },
+  premium:{
+    label:'Premium', tagline:'Full freedom and flexibility', icon:'✨',
+    description:'More freedom — regular travel, private healthcare, diverse hobbies, family support, and full lifestyle flexibility.',
+    expenses:{food:1000,utilities:300,transport:500,housing:1500,insurance:600,healthcare:800,familySupport:500,hobbies:500,travel:600,dining:500,helper:800,gifts:200,emergency:400,other:300}
+  },
+  custom:{
+    label:'Custom', tagline:'Fully tailored by you', icon:'⚙️',
+    description:'Build your own lifestyle estimate tailored exactly to your retirement vision.',
+    expenses:{food:0,utilities:0,transport:0,housing:0,insurance:0,healthcare:0,familySupport:0,hobbies:0,travel:0,dining:0,helper:0,gifts:0,emergency:0,other:0}
+  }
+};
+
+const EXPENSE_CATEGORIES = [
+  {key:'food',         label:'Food & Groceries',         tip:'Daily meals, groceries, and household food supplies.'},
+  {key:'utilities',    label:'Utilities & Phone',         tip:'Electricity, water, gas, internet, and mobile bills.'},
+  {key:'transport',    label:'Transport',                 tip:'Public transport, taxi, ride-hailing, or car running costs.'},
+  {key:'housing',      label:'Housing / Property',        tip:'Rent, mortgage payments, maintenance fees, or property taxes.'},
+  {key:'insurance',    label:'Insurance Premiums',        tip:'Life, health, travel, and other insurance policies.'},
+  {key:'healthcare',   label:'Healthcare & Medical',      tip:'Doctor visits, dental, specialist fees, and prescriptions.'},
+  {key:'familySupport',label:'Family Support',            tip:'Monthly allowances for parents, children, or dependents.'},
+  {key:'hobbies',      label:'Hobbies & Recreation',     tip:'Sports, clubs, creative activities, and leisure pursuits.'},
+  {key:'travel',       label:'Travel Fund',               tip:'Holiday trips, weekend getaways, and travel experiences.'},
+  {key:'dining',       label:'Dining & Entertainment',    tip:'Restaurants, cafes, movies, events, and outings.'},
+  {key:'helper',       label:'Helper / Caregiver',        tip:'Domestic helper, caregiver services, or elder care costs.'},
+  {key:'gifts',        label:'Gifts & Festive',           tip:'Birthday gifts, festive celebrations, and special occasions.'},
+  {key:'emergency',    label:'Emergency Buffer',          tip:'Monthly set-aside for unexpected expenses or emergencies.'},
+  {key:'other',        label:'Other Expenses',            tip:'Any other regular monthly costs not listed above.'},
+];
+
+const CURRENCIES = [
+  {value:'SGD',label:'SGD – Singapore Dollar'},{value:'USD',label:'USD – US Dollar'},
+  {value:'MYR',label:'MYR – Malaysian Ringgit'},{value:'AUD',label:'AUD – Australian Dollar'},
+  {value:'GBP',label:'GBP – British Pound'},{value:'EUR',label:'EUR – Euro'},
+  {value:'HKD',label:'HKD – Hong Kong Dollar'},{value:'JPY',label:'JPY – Japanese Yen'},
+];
+
+const STEP_NAMES = [
+  'Basic Profile','Lifestyle Choice','Monthly Expenses','Inflation Adjustment',
+  'Retirement Duration','Total Fund Needed','Current Resources','Monthly Savings',
+  'Gap Analysis','Top-Up Needed'
+];
+
+const DEFAULT_STATE = {
+  name:'', currentAge:35, retirementAge:65, planningAge:85,
+  maritalStatus:'single', dependents:0, currency:'SGD',
+  currentMonthlyIncome:8000, currentMonthlyExpenses:5000,
+  lifestyleChoice:'comfortable',
+  expenses:{...LIFESTYLE_PRESETS.comfortable.expenses},
+  inflationRate:3,
+  portfolioReturnDuringRetirement:4,
+  withdrawalStrategy:'balanced',
+  currentCashSavings:50000, currentInvestments:30000,
+  currentCPF:80000, currentRetirementPlans:0,
+  cpfLifeMonthly:1200, rentalIncome:0,
+  businessIncome:0, passiveIncome:0, otherRetirementIncome:0,
+  monthlyContribution:1000, preRetirementReturn:6,
+  increaseSavingsYearly:false, annualSavingsIncrease:3,
+};
+
+// ─── Trend Data ─────────────────────────────────────────────────────────────────
+
+const LIFESPAN_DATA = [
+  {year:'1960',age:65.7},{year:'1970',age:67.9},{year:'1980',age:71.7},
+  {year:'1990',age:74.6},{year:'2000',age:78.0},{year:'2010',age:81.7},
+  {year:'2020',age:83.6},{year:'2023',age:83.9},{year:'2050*',age:86.5,proj:true},
+];
+const INFLATION_DATA = [
+  {year:'2015',rate:-0.5},{year:'2016',rate:-0.5},{year:'2017',rate:0.6},
+  {year:'2018',rate:0.4},{year:'2019',rate:0.6},{year:'2020',rate:-0.2},
+  {year:'2021',rate:2.3},{year:'2022',rate:6.1},{year:'2023',rate:4.8},{year:'2024',rate:2.7},
+];
+
+// ─── Calculations ───────────────────────────────────────────────────────────────
+
+function calcResults(s){
+  const yearsToRetirement   = Math.max(0,(s.retirementAge||65)-(s.currentAge||35));
+  const retirementDuration  = Math.max(0,(s.planningAge||85)-(s.retirementAge||65));
+  const currentMonthlyNeed  = Object.values(s.expenses||{}).reduce((a,b)=>a+(+b||0),0);
+  const inf = (+s.inflationRate||3)/100;
+  const futureMonthlyNeed   = currentMonthlyNeed*Math.pow(1+inf,yearsToRetirement);
+  const simpleTotalFundNeeded = futureMonthlyNeed*12*retirementDuration;
+  const totalCurrentAssets  = (+s.currentCashSavings||0)+(+s.currentInvestments||0)+(+s.currentCPF||0)+(+s.currentRetirementPlans||0);
+  const ar = (+s.preRetirementReturn||0)/100;
+  const fvCurrentAssets     = totalCurrentAssets*Math.pow(1+ar,yearsToRetirement);
+  const mr = ar/12, nm = yearsToRetirement*12, pmt = +s.monthlyContribution||0;
+  const fvMonthlyContributions = mr===0||nm===0 ? pmt*nm : pmt*((Math.pow(1+mr,nm)-1)/mr);
+  const projectedAssetsAtRetirement = fvCurrentAssets+fvMonthlyContributions;
+  const monthlyRetirementIncome = (+s.cpfLifeMonthly||0)+(+s.rentalIncome||0)+(+s.businessIncome||0)+(+s.passiveIncome||0)+(+s.otherRetirementIncome||0);
+  const projectedMonthlyFromAssets = retirementDuration>0 ? projectedAssetsAtRetirement/(retirementDuration*12) : 0;
+  const totalProjectedMonthlyIncome = monthlyRetirementIncome+projectedMonthlyFromAssets;
+  const retirementGap    = simpleTotalFundNeeded-projectedAssetsAtRetirement;
+  const goalProgress     = simpleTotalFundNeeded>0 ? Math.min(150,(projectedAssetsAtRetirement/simpleTotalFundNeeded)*100) : 0;
+  const monthlyIncomeGap = futureMonthlyNeed-totalProjectedMonthlyIncome;
+  let monthlyTopUp=0;
+  if(retirementGap>0&&nm>0){ monthlyTopUp = mr===0 ? retirementGap/nm : retirementGap*mr/(Math.pow(1+mr,nm)-1); }
+  return {yearsToRetirement,retirementDuration,currentMonthlyNeed,futureMonthlyNeed,simpleTotalFundNeeded,
+    totalCurrentAssets,fvCurrentAssets,fvMonthlyContributions,projectedAssetsAtRetirement,
+    monthlyRetirementIncome,projectedMonthlyFromAssets,totalProjectedMonthlyIncome,
+    retirementGap,goalProgress,monthlyIncomeGap,monthlyTopUp};
+}
+
+// ─── Sharing ────────────────────────────────────────────────────────────────────
+
+function encodeState(data){
+  try{ return btoa(encodeURIComponent(JSON.stringify(data))); }catch{ return null; }
+}
+function decodeState(encoded){
+  try{ return JSON.parse(decodeURIComponent(atob(encoded))); }catch{ return null; }
+}
+function getShareUrl(data){
+  const encoded = encodeState(data);
+  if(!encoded) return null;
+  return `${window.location.origin}${window.location.pathname}#plan=${encoded}`;
+}
+async function exportShareableFile(data){
+  let html = window.__PAGE_TEMPLATE__;
+  if(!html){
+    try{ const r=await fetch(window.location.href); html=await r.text(); }
+    catch{ return false; }
+  }
+  const stateJson = JSON.stringify(data);
+  const updated = html.replace(
+    'window.__SHARED_PLAN__ = null;',
+    `window.__SHARED_PLAN__ = ${stateJson};`
+  );
+  const blob = new Blob([updated],{type:'text/html'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href=url; a.download=`retirement-plan-${data.name||'shared'}.html`; a.click();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
+// ─── Formatting ─────────────────────────────────────────────────────────────────
+
+const fmt    = (v,cur='SGD')=>(!isFinite(v)||isNaN(v))?`${cur} 0`:`${cur} ${Math.round(v).toLocaleString()}`;
+const fmtPct = v=>isFinite(v)&&!isNaN(v)?`${Math.round(Math.min(v,999))}%`:'0%';
+
+// ─── Primitive UI ────────────────────────────────────────────────────────────────
+
+const Card = ({children,className='',style={}})=>(
+  <div className={`bg-white border border-stone-200 rounded-2xl shadow-sm ${className}`} style={style}>{children}</div>
+);
+const Tip = ({text})=>(
+  <div className="tooltip-wrap">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a8a29e" strokeWidth="2" strokeLinecap="round" style={{cursor:'help'}}>
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+    <div className="tooltip-box">{text}</div>
+  </div>
+);
+const FL = ({children,tip})=>(
+  <div style={{display:'flex',alignItems:'center',gap:5,marginBottom:5}}>
+    <span style={{fontSize:13,fontWeight:600,color:'#44403c'}}>{children}</span>
+    {tip&&<Tip text={tip}/>}
+  </div>
+);
+const NInput = ({value,onChange,prefix,min,max,step=1,placeholder})=>(
+  <div style={{position:'relative',display:'flex',alignItems:'center'}}>
+    {prefix&&<span style={{position:'absolute',left:10,fontSize:12,fontWeight:600,color:'#78716c',pointerEvents:'none'}}>{prefix}</span>}
+    <input type="number" value={value} min={min} max={max} step={step} placeholder={placeholder}
+      onChange={e=>onChange(Number(e.target.value))}
+      style={{width:'100%',border:'1px solid #e7e5e4',borderRadius:10,padding:'8px 10px',
+        paddingLeft:prefix?42:10,fontSize:13,color:'#1c1917',background:'#fafaf9',outline:'none'}}
+      onFocus={e=>e.target.style.borderColor='#4ade80'}
+      onBlur={e=>e.target.style.borderColor='#e7e5e4'}
+    />
+  </div>
+);
+const TInput = ({value,onChange,placeholder})=>(
+  <input type="text" value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}
+    style={{width:'100%',border:'1px solid #e7e5e4',borderRadius:10,padding:'8px 10px',
+      fontSize:13,color:'#1c1917',background:'#fafaf9',outline:'none'}}
+    onFocus={e=>e.target.style.borderColor='#4ade80'}
+    onBlur={e=>e.target.style.borderColor='#e7e5e4'}
+  />
+);
+const Sel = ({value,onChange,options})=>(
+  <select value={value} onChange={e=>onChange(e.target.value)}
+    style={{width:'100%',border:'1px solid #e7e5e4',borderRadius:10,padding:'8px 10px',
+      fontSize:13,color:'#1c1917',background:'#fafaf9',outline:'none',cursor:'pointer'}}>
+    {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+  </select>
+);
+const Btn = ({children,onClick,variant='primary',disabled=false,size='md'})=>{
+  const base={display:'inline-flex',alignItems:'center',justifyContent:'center',borderRadius:10,
+    fontWeight:600,cursor:disabled?'not-allowed':'pointer',transition:'all 0.15s',border:'none',
+    fontSize:size==='sm'?12:14,padding:size==='sm'?'6px 12px':'10px 20px',
+    opacity:disabled?0.6:1,whiteSpace:'nowrap'};
+  const V={
+    primary: {...base,background:'#15803d',color:'white'},
+    secondary:{...base,background:'white',border:'1px solid #d6d3d1',color:'#44403c'},
+    ghost:   {...base,background:'transparent',color:'#57534e'},
+    danger:  {...base,background:'#fff1f2',border:'1px solid #fecdd3',color:'#be123c'},
+    teal:    {...base,background:'#f0fdfa',border:'1px solid #99f6e4',color:'#0f766e'},
+    amber:   {...base,background:'#fffbeb',border:'1px solid #fde68a',color:'#92400e'},
+  };
+  return <button onClick={disabled?null:onClick} style={V[variant]||V.primary}>{children}</button>;
+};
+const ProgressBar = ({value,max=100,color='green'})=>{
+  const pct=Math.min(100,Math.max(0,(value/max)*100));
+  const bg=color==='green'?'#16a34a':color==='amber'?'#d97706':'#ef4444';
+  return(
+    <div style={{background:'#e7e5e4',borderRadius:99,height:8,overflow:'hidden'}}>
+      <div className="progress-bar-fill" style={{height:8,borderRadius:99,background:bg,width:`${pct}%`}}/>
+    </div>
+  );
+};
+const DonutChart = ({progress,size=130})=>{
+  const r=42,circ=2*Math.PI*r;
+  const pct=Math.min(150,Math.max(0,progress));
+  const disp=Math.min(100,pct);
+  const offset=circ-(disp/100)*circ;
+  const color=pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626';
+  return(
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r={r} fill="none" stroke="#f5f5f4" strokeWidth="14"/>
+      <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="14"
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="round" transform="rotate(-90 50 50)"
+        style={{transition:'stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)'}}/>
+      <text x="50" y="46" textAnchor="middle" fontSize="15" fontWeight="800" fill="#1c1917">{Math.round(pct)}%</text>
+      <text x="50" y="59" textAnchor="middle" fontSize="7" fill="#78716c">of goal</text>
+    </svg>
+  );
+};
+const StepNav = ({step,total})=>(
+  <div style={{marginBottom:28}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+      <span style={{fontSize:11,fontWeight:700,color:'#78716c',textTransform:'uppercase',letterSpacing:'0.08em'}}>Step {step} of {total}</span>
+      <span style={{fontSize:11,color:'#a8a29e'}}>{STEP_NAMES[step-1]}</span>
+    </div>
+    <div style={{display:'flex',gap:4}}>
+      {Array.from({length:total}).map((_,i)=>(
+        <div key={i} style={{flex:1,height:3,borderRadius:99,background:i<step?'#15803d':'#e7e5e4',transition:'background 0.3s'}}/>
+      ))}
+    </div>
+  </div>
+);
+
+// ─── Toast ───────────────────────────────────────────────────────────────────────
+
+const ToastContext = React.createContext(null);
+const ToastProvider = ({children})=>{
+  const [toasts,setToasts]=useState([]);
+  const showToast = useCallback((msg,type='success')=>{
+    const id=Date.now();
+    setToasts(p=>[...p,{id,msg,type}]);
+    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)),2800);
+  },[]);
+  return(
+    <ToastContext.Provider value={showToast}>
+      {children}
+      <div style={{position:'fixed',bottom:24,left:'50%',transform:'translateX(-50%)',
+        display:'flex',flexDirection:'column',gap:8,zIndex:9999,alignItems:'center'}}>
+        {toasts.map(t=>(
+          <div key={t.id} className="toast-in" style={{
+            background:t.type==='error'?'#1c1917':'#1c1917',
+            color:'white',borderRadius:12,padding:'10px 18px',
+            fontSize:13,fontWeight:600,display:'flex',alignItems:'center',gap:8,
+            boxShadow:'0 8px 24px rgba(0,0,0,0.2)',whiteSpace:'nowrap'}}>
+            <span>{t.type==='success'?'✓':t.type==='error'?'✕':'ℹ'}</span>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+};
+const useToast = ()=>React.useContext(ToastContext);
+
+// ─── Trend Insight ───────────────────────────────────────────────────────────────
+
+const Trend = ({icon='📈',tag='Trend Insight',title,children})=>(
+  <div style={{background:'linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%)',
+    border:'1px solid #bae6fd',borderRadius:14,padding:'14px 16px',marginTop:20}}>
+    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+      <span style={{fontSize:13}}>{icon}</span>
+      <span style={{fontSize:9,fontWeight:800,color:'#0369a1',textTransform:'uppercase',
+        letterSpacing:'0.1em',background:'#bae6fd',padding:'2px 7px',borderRadius:99}}>{tag}</span>
+    </div>
+    {title&&<div style={{fontSize:13,fontWeight:700,color:'#0c4a6e',marginBottom:5}}>{title}</div>}
+    <div style={{fontSize:12,color:'#0369a1',lineHeight:1.7}}>{children}</div>
+  </div>
+);
+
+const LifespanChart = ()=>(
+  <div style={{marginTop:12}}>
+    {LIFESPAN_DATA.map(d=>(
+      <div key={d.year} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+        <span style={{fontSize:9,color:'#64748b',width:32,textAlign:'right',flexShrink:0,fontStyle:d.proj?'italic':'normal'}}>{d.year}</span>
+        <div style={{position:'relative',flex:1,height:14,background:'#e0f2fe',borderRadius:99,overflow:'hidden'}}>
+          <div style={{position:'absolute',left:0,top:0,height:'100%',
+            width:`${(d.age/90)*100}%`,
+            background:d.proj?'#7dd3fc':'#0284c7',
+            borderRadius:99,display:'flex',alignItems:'center',paddingLeft:6,transition:'width 1s'}}>
+            <span style={{fontSize:9,color:'white',fontWeight:700,whiteSpace:'nowrap'}}>{d.age} yrs</span>
+          </div>
+        </div>
+      </div>
+    ))}
+    <div style={{fontSize:9,color:'#94a3b8',marginTop:5}}>* Projected. Sources: World Bank, Singstat, UN Population Division</div>
+  </div>
+);
+
+const InflationChart = ()=>{
+  const max=Math.max(...INFLATION_DATA.map(d=>Math.abs(d.rate)));
+  return(
+    <div style={{marginTop:12}}>
+      <div style={{display:'flex',alignItems:'flex-end',gap:4,height:60}}>
+        {INFLATION_DATA.map(d=>{
+          const h = Math.abs(d.rate)/max*52;
+          const isNeg = d.rate<0;
+          return(
+            <div key={d.year} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+              <span style={{fontSize:8,color:d.rate>=4?'#0369a1':'#64748b',fontWeight:d.rate>=4?700:400}}>{d.rate>0?`+${d.rate}`:d.rate}%</span>
+              <div style={{height:h,width:'100%',borderRadius:'3px 3px 0 0',
+                background:d.rate>=4?'#0284c7':isNeg?'#fca5a5':'#7dd3fc',minHeight:3}}/>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:'flex',gap:4,marginTop:3}}>
+        {INFLATION_DATA.map(d=>(
+          <div key={d.year} style={{flex:1,textAlign:'center'}}>
+            <span style={{fontSize:7.5,color:'#94a3b8'}}>{d.year.slice(2)}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:9,color:'#94a3b8',marginTop:4}}>Singapore CPI inflation 2015–2024. Source: Singstat / MAS</div>
+    </div>
+  );
+};
+
+// ─── Steps ───────────────────────────────────────────────────────────────────────
+
+const Step1 = ({s,u,errs})=>(
+  <div className="slide-in">
+    <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Your Basic Profile</h2>
+    <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Let's start with a few details to personalise your retirement plan.</p>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+      <div style={{gridColumn:'1/-1'}}><FL>Your Name</FL><TInput value={s.name} onChange={v=>u('name',v)} placeholder="e.g. Sarah Tan"/></div>
+      <div>
+        <FL tip="Your current age today">Current Age</FL>
+        <NInput value={s.currentAge} onChange={v=>u('currentAge',v)} min={18} max={100}/>
+        {errs.currentAge&&<p style={{color:'#dc2626',fontSize:11,marginTop:4}}>{errs.currentAge}</p>}
+      </div>
+      <div>
+        <FL tip="The age you'd like to stop working full-time">Desired Retirement Age</FL>
+        <NInput value={s.retirementAge} onChange={v=>u('retirementAge',v)} min={40} max={100}/>
+        {errs.retirementAge&&<p style={{color:'#dc2626',fontSize:11,marginTop:4}}>{errs.retirementAge}</p>}
+      </div>
+      <div>
+        <FL tip="Plan conservatively — financial advisers often recommend planning to age 85–95">Planning Until Age</FL>
+        <NInput value={s.planningAge} onChange={v=>u('planningAge',v)} min={55} max={120}/>
+        {errs.planningAge&&<p style={{color:'#dc2626',fontSize:11,marginTop:4}}>{errs.planningAge}</p>}
+      </div>
+      <div><FL>Marital Status</FL>
+        <Sel value={s.maritalStatus} onChange={v=>u('maritalStatus',v)} options={[
+          {value:'single',label:'Single'},{value:'married',label:'Married'},
+          {value:'divorced',label:'Divorced / Separated'},{value:'widowed',label:'Widowed'},
+        ]}/>
+      </div>
+      <div><FL tip="Children or elderly parents you provide regular financial support for">Number of Dependents</FL><NInput value={s.dependents} onChange={v=>u('dependents',v)} min={0} max={20}/></div>
+      <div><FL>Currency</FL><Sel value={s.currency} onChange={v=>u('currency',v)} options={CURRENCIES}/></div>
+      <div><FL tip="Your total monthly take-home income from all sources">Current Monthly Income</FL><NInput value={s.currentMonthlyIncome} onChange={v=>u('currentMonthlyIncome',v)} prefix={s.currency} min={0}/></div>
+      <div><FL tip="What you spend each month today across all categories">Current Monthly Expenses</FL><NInput value={s.currentMonthlyExpenses} onChange={v=>u('currentMonthlyExpenses',v)} prefix={s.currency} min={0}/></div>
+    </div>
+    <Trend icon="⏳" tag="Longevity Trend">
+      <strong>People are living significantly longer than previous generations.</strong> A 35-year-old in Singapore today can expect to live to <strong>84–87 years</strong> on average — and many will live well past 90.
+      Planning to 85 or beyond is no longer conservative — it's increasingly necessary. Setting a planning age of 90 gives you a meaningful safety buffer.
+    </Trend>
+  </div>
+);
+
+const Step2 = ({s,u})=>{
+  const entries=Object.entries(LIFESTYLE_PRESETS);
+  const borderC={basic:'#93c5fd',comfortable:'#6ee7b7',premium:'#c4b5fd',custom:'#fcd34d'};
+  const bgC    ={basic:'#eff6ff',comfortable:'#f0fdf4',premium:'#faf5ff',custom:'#fffbeb'};
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Your Retirement Lifestyle</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Choose a starting lifestyle — you can adjust every expense figure in the next step.</p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        {entries.map(([key,ls])=>{
+          const sel=s.lifestyleChoice===key;
+          const total=Object.values(ls.expenses).reduce((a,b)=>a+b,0);
+          return(
+            <button key={key} onClick={()=>{u('lifestyleChoice',key);if(key!=='custom')u('expenses',{...ls.expenses});}}
+              style={{textAlign:'left',padding:16,borderRadius:14,cursor:'pointer',
+                border:`2px solid ${sel?borderC[key]:'#e7e5e4'}`,
+                background:sel?bgC[key]:'white',
+                outline:sel?`3px solid ${borderC[key]}`:'none',outlineOffset:1,transition:'all 0.2s'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
+                <span style={{fontSize:20}}>{ls.icon}</span>
+                {sel&&<span style={{width:18,height:18,borderRadius:'50%',background:'#15803d',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 6l3 3 5-6" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round"/></svg>
+                </span>}
+              </div>
+              <div style={{fontWeight:700,fontSize:14,color:'#1c1917',marginBottom:2}}>{ls.label}</div>
+              <div style={{fontSize:11,color:'#78716c',marginBottom:8,lineHeight:1.5}}>{ls.description}</div>
+              {key!=='custom'&&<div style={{fontSize:12,fontWeight:700,color:'#44403c'}}>~{s.currency} {total.toLocaleString()}<span style={{fontWeight:400,color:'#a8a29e'}}>/month default</span></div>}
+            </button>
+          );
+        })}
+      </div>
+      <Trend icon="📈" tag="Cost of Living Trend" title="Retirement costs are rising faster than general inflation">
+        Healthcare costs in Singapore have grown at approximately <strong>6–8% annually</strong> — roughly double the general CPI rate.
+        A comfortable retirement lifestyle that costs <strong>SGD 4,000/month today</strong> could cost <strong>SGD 7,200–9,000/month in 20 years</strong> when healthcare inflation is factored in.
+        Choosing a lifestyle category with adequate healthcare and buffer is increasingly important.
+      </Trend>
+    </div>
+  );
+};
+
+const Step3 = ({s,u})=>{
+  const total=Object.values(s.expenses).reduce((a,b)=>a+(+b||0),0);
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Monthly Retirement Expenses</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:12}}>Adjust each category to reflect what you expect to spend per month in retirement. These are today's prices — we'll apply inflation in the next step.</p>
+      <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:12,padding:'12px 16px',
+        display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+        <span style={{fontSize:13,fontWeight:600,color:'#14532d'}}>Estimated Monthly Retirement Cost (Today's Prices)</span>
+        <span style={{fontWeight:800,fontSize:18,color:'#15803d'}}>{fmt(total,s.currency)}</span>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {EXPENSE_CATEGORIES.map(cat=>(
+          <div key={cat.key} style={{display:'flex',alignItems:'center',gap:12}}>
+            <div style={{flex:1,minWidth:0}}><FL tip={cat.tip}>{cat.label}</FL></div>
+            <div style={{width:160,flexShrink:0}}>
+              <NInput value={s.expenses[cat.key]||0}
+                onChange={v=>u('expenses',{...s.expenses,[cat.key]:+v||0})} prefix={s.currency} min={0}/>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const Step4 = ({s,u})=>{
+  const ytr=Math.max(0,(s.retirementAge||65)-(s.currentAge||35));
+  const cur=Object.values(s.expenses).reduce((a,b)=>a+(+b||0),0);
+  const fut=cur*Math.pow(1+(+s.inflationRate||3)/100,ytr);
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Inflation Adjustment</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Prices tend to rise over time. We'll adjust your retirement income target to reflect this reality.</p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:20}}>
+        <div>
+          <FL tip="Singapore's long-run CPI inflation averages 2–3% per year. A 3% default is a widely-used planning assumption.">Annual Inflation Rate (%)</FL>
+          <NInput value={s.inflationRate} onChange={v=>u('inflationRate',v)} min={0} max={15} step={0.5}/>
+        </div>
+        <div style={{display:'flex',alignItems:'flex-end'}}>
+          <div style={{width:'100%',background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,padding:'9px 12px',fontSize:13,color:'#44403c'}}>
+            Years to Retirement: <strong style={{color:'#1c1917'}}>{ytr}</strong>
+          </div>
+        </div>
+      </div>
+      <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:14,padding:20,marginBottom:0}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'center',textAlign:'center',marginBottom:12}}>
+          <div>
+            <div style={{fontSize:11,color:'#92400e',marginBottom:4}}>Today's Monthly Cost</div>
+            <div style={{fontWeight:800,fontSize:20,color:'#1c1917'}}>{fmt(cur,s.currency)}</div>
+          </div>
+          <div style={{fontSize:22,color:'#d97706',fontWeight:300}}>→</div>
+          <div>
+            <div style={{fontSize:11,color:'#92400e',marginBottom:4}}>Future Monthly Cost at Retirement</div>
+            <div style={{fontWeight:800,fontSize:20,color:'#b45309'}}>{fmt(fut,s.currency)}</div>
+          </div>
+        </div>
+        <p style={{fontSize:11,color:'#78716c',textAlign:'center',lineHeight:1.6}}>
+          If your desired lifestyle costs <strong>{fmt(cur,s.currency)}</strong> today, it may cost around <strong>{fmt(fut,s.currency)}/month</strong> when you retire — assuming {s.inflationRate}% annual inflation over {ytr} years.
+        </p>
+      </div>
+      <Trend icon="📊" tag="Inflation History" title="Singapore inflation has been volatile — and spiked sharply in 2022–2023">
+        After nearly a decade of low inflation, Singapore saw CPI rise to <strong>6.1% in 2022</strong> — the highest in 14 years — driven by global supply shocks and a post-pandemic surge. While inflation has since moderated, the episode is a reminder that using 3% as a planning floor is prudent, and that healthcare-specific inflation (6–8%) may require a higher assumption for medical costs.
+        <InflationChart/>
+      </Trend>
+    </div>
+  );
+};
+
+const Step5 = ({s,u})=>{
+  const ytr=Math.max(0,(s.retirementAge||65)-(s.currentAge||35));
+  const dur=Math.max(0,(s.planningAge||85)-(s.retirementAge||65));
+  const horizon=(s.planningAge||85)-(s.currentAge||35);
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Retirement Duration</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Understanding how long your retirement may last helps us estimate how much you need to accumulate.</p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:20}}>
+        <div><FL>Retirement Age</FL><NInput value={s.retirementAge} onChange={v=>u('retirementAge',v)} min={40} max={100}/></div>
+        <div>
+          <FL tip="Plan conservatively — many people live into their late 80s and 90s. A longer planning horizon provides a safety buffer.">Planning Until Age</FL>
+          <NInput value={s.planningAge} onChange={v=>u('planningAge',v)} min={55} max={120}/>
+        </div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:16}}>
+        {[
+          {label:'Years to Retirement',value:ytr,bg:'#eff6ff',tc:'#1e40af'},
+          {label:'Retirement Duration',value:dur,bg:'#f0fdf4',tc:'#15803d'},
+          {label:'Total Planning Horizon',value:horizon,bg:'#fffbeb',tc:'#b45309'},
+        ].map(item=>(
+          <div key={item.label} style={{background:item.bg,borderRadius:12,padding:16,textAlign:'center'}}>
+            <div style={{fontSize:32,fontWeight:800,color:item.tc,lineHeight:1}}>{item.value}</div>
+            <div style={{fontSize:10,color:'#78716c',marginTop:4}}>{item.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:12,padding:'12px 16px',fontSize:13,color:'#57534e',lineHeight:1.6}}>
+        You are planning for approximately <strong style={{color:'#1c1917'}}>{dur} years</strong> of retirement — from age <strong>{s.retirementAge}</strong> to <strong>{s.planningAge}</strong>.
+      </div>
+      <Trend icon="⏳" tag="Longevity Trend" title="Singapore life expectancy has nearly doubled since 1960">
+        The average Singaporean lifespan has grown from <strong>65.7 years in 1960</strong> to <strong>83.9 years in 2023</strong> — and projections suggest it will reach <strong>86–88 years by 2050</strong>. Many individuals who are healthy and financially comfortable live well into their 90s. A 30-year retirement is becoming increasingly common.
+        <LifespanChart/>
+      </Trend>
+    </div>
+  );
+};
+
+const Step6 = ({s,u})=>{
+  const r=calcResults(s);
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Total Retirement Fund Needed</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Based on your lifestyle and timeline, here's an estimate of the total fund you'll need to build.</p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:20}}>
+        <div>
+          <FL tip="Expected average annual return on your portfolio after you retire. A conservative 3–5% is common for a balanced drawdown portfolio.">Portfolio Return During Retirement (%)</FL>
+          <NInput value={s.portfolioReturnDuringRetirement} onChange={v=>u('portfolioReturnDuringRetirement',v)} min={0} max={15} step={0.5}/>
+        </div>
+        <div>
+          <FL>Withdrawal Strategy</FL>
+          <Sel value={s.withdrawalStrategy} onChange={v=>u('withdrawalStrategy',v)} options={[
+            {value:'conservative',label:'Conservative — Capital Preservation'},
+            {value:'balanced',label:'Balanced — Moderate Drawdown'},
+            {value:'custom',label:'Custom — Flexible Approach'},
+          ]}/>
+        </div>
+      </div>
+      <div style={{border:'2px solid #bbf7d0',borderRadius:16,padding:24,marginBottom:14}}>
+        <div style={{fontSize:11,color:'#78716c',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Estimated Retirement Fund Needed</div>
+        <div style={{fontWeight:800,fontSize:32,color:'#15803d',lineHeight:1}}>{fmt(r.simpleTotalFundNeeded,s.currency)}</div>
+        <div style={{fontSize:11,color:'#a8a29e',marginTop:4}}>{fmt(r.futureMonthlyNeed,s.currency)}/month × 12 months × {r.retirementDuration} years</div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        {[
+          {label:"Today's Monthly Cost",value:fmt(r.currentMonthlyNeed,s.currency)},
+          {label:'Future Monthly Need',value:fmt(r.futureMonthlyNeed,s.currency),amber:true},
+          {label:'Retirement Duration',value:`${r.retirementDuration} years`},
+          {label:'Years to Retirement',value:`${r.yearsToRetirement} years`},
+        ].map(item=>(
+          <div key={item.label} style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,padding:'12px 14px'}}>
+            <div style={{fontSize:11,color:'#a8a29e',marginBottom:3}}>{item.label}</div>
+            <div style={{fontWeight:700,fontSize:14,color:item.amber?'#b45309':'#1c1917'}}>{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const Step7 = ({s,u})=>{
+  const totalAssets=(+s.currentCashSavings||0)+(+s.currentInvestments||0)+(+s.currentCPF||0)+(+s.currentRetirementPlans||0);
+  const totalMonthly=(+s.cpfLifeMonthly||0)+(+s.rentalIncome||0)+(+s.businessIncome||0)+(+s.passiveIncome||0)+(+s.otherRetirementIncome||0);
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Your Current Resources</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Tell us what you've already built. This shows how close you are to your goal today.</p>
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:12,fontWeight:700,color:'#57534e',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:10}}>Retirement Assets (Lump Sum)</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          {[
+            {k:'currentCashSavings',l:'Cash Savings',t:'Cash in bank accounts, fixed deposits, or savings earmarked for retirement.'},
+            {k:'currentInvestments',l:'Investments',t:'Stocks, bonds, unit trusts, REITs, ETFs, or other market investments.'},
+            {k:'currentCPF',l:'CPF Savings (OA + SA + RA)',t:'Total CPF balance across Ordinary, Special, and Retirement accounts.'},
+            {k:'currentRetirementPlans',l:'Retirement Plans / Annuities',t:'Insurance-based retirement plans, ILPs, or annuity policies.'},
+          ].map(item=>(
+            <div key={item.k}><FL tip={item.t}>{item.l}</FL><NInput value={s[item.k]} onChange={v=>u(item.k,v)} prefix={s.currency} min={0}/></div>
+          ))}
+        </div>
+        <div style={{marginTop:10,background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:10,
+          padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:13,fontWeight:600,color:'#14532d'}}>Total Current Retirement Assets</span>
+          <span style={{fontWeight:800,fontSize:15,color:'#15803d'}}>{fmt(totalAssets,s.currency)}</span>
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:12,fontWeight:700,color:'#57534e',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:10}}>Expected Monthly Income in Retirement</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          {[
+            {k:'cpfLifeMonthly',l:'CPF LIFE Monthly Payout',t:'Estimated monthly income from the CPF LIFE scheme from your retirement age onwards.'},
+            {k:'rentalIncome',l:'Rental Income',t:'Expected monthly rental income from investment properties during retirement.'},
+            {k:'businessIncome',l:'Business / Part-time Income',t:'Any expected income from a business, consulting, or part-time work in retirement.'},
+            {k:'passiveIncome',l:'Passive / Dividend Income',t:'Regular income from dividends, royalties, or passive investment strategies.'},
+            {k:'otherRetirementIncome',l:'Other Monthly Income',t:'Any other recurring monthly income not listed above.'},
+          ].map(item=>(
+            <div key={item.k}><FL tip={item.t}>{item.l}</FL><NInput value={s[item.k]} onChange={v=>u(item.k,v)} prefix={s.currency} min={0}/></div>
+          ))}
+        </div>
+        <div style={{marginTop:10,background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,
+          padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:13,fontWeight:600,color:'#44403c'}}>Total Expected Monthly Income</span>
+          <span style={{fontWeight:800,fontSize:15,color:'#1c1917'}}>{fmt(totalMonthly,s.currency)}</span>
+        </div>
+      </div>
+      <Trend icon="📋" tag="Retirement Readiness" title="Most people are less prepared than they think">
+        The <strong>OCBC Financial Wellness Index</strong> found that <strong>7 in 10 Singaporeans</strong> feel they are not financially prepared for retirement. The average Singaporean expects to need <strong>SGD 3,700–4,800/month</strong> in retirement but is only saving enough to cover a fraction of that. Building multiple income sources — CPF LIFE, investments, and passive income — significantly improves retirement resilience.
+      </Trend>
+    </div>
+  );
+};
+
+const Step8 = ({s,u})=>{
+  const r=calcResults(s);
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Monthly Retirement Savings</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Tell us about your current saving and investing habits. We'll project how much you'll accumulate by retirement.</p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:16}}>
+        <div>
+          <FL tip="The amount you save or invest each month specifically for retirement — including CPF voluntary contributions, SRS, or private investments.">Monthly Retirement Contribution</FL>
+          <NInput value={s.monthlyContribution} onChange={v=>u('monthlyContribution',v)} prefix={s.currency} min={0}/>
+        </div>
+        <div>
+          <FL tip="Expected average annual return on your investments before retirement. A globally diversified portfolio has historically returned 6–9% over long periods.">Expected Annual Return (%)</FL>
+          <NInput value={s.preRetirementReturn} onChange={v=>u('preRetirementReturn',v)} min={0} max={20} step={0.5}/>
+        </div>
+        <div>
+          <FL>Increase Savings Annually?</FL>
+          <Sel value={s.increaseSavingsYearly?'yes':'no'} onChange={v=>u('increaseSavingsYearly',v==='yes')} options={[
+            {value:'no',label:'No — keep contributions the same'},
+            {value:'yes',label:'Yes — increase each year'},
+          ]}/>
+        </div>
+        {s.increaseSavingsYearly&&(
+          <div>
+            <FL tip="The percentage by which you plan to increase your monthly savings each year.">Annual Savings Increase (%)</FL>
+            <NInput value={s.annualSavingsIncrease} onChange={v=>u('annualSavingsIncrease',v)} min={0} max={20} step={0.5}/>
+          </div>
+        )}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:0}}>
+        {[
+          {label:'Current Assets Grown to',value:fmt(r.fvCurrentAssets,s.currency),bg:'#eff6ff',tc:'#1e40af'},
+          {label:'Contributions Grown to',value:fmt(r.fvMonthlyContributions,s.currency),bg:'#f0fdf4',tc:'#15803d'},
+          {label:'Projected Total at Retirement',value:fmt(r.projectedAssetsAtRetirement,s.currency),bg:'#fffbeb',tc:'#b45309'},
+        ].map(item=>(
+          <div key={item.label} style={{background:item.bg,borderRadius:12,padding:'14px 12px',textAlign:'center'}}>
+            <div style={{fontSize:11,color:'#78716c',marginBottom:6,lineHeight:1.4}}>{item.label}</div>
+            <div style={{fontWeight:800,fontSize:14,color:item.tc}}>{item.value}</div>
+          </div>
+        ))}
+      </div>
+      <Trend icon="📈" tag="Investment Returns" title="Historical long-run investment returns by asset class">
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,margin:'8px 0'}}>
+          {[
+            {label:'Global equities (long-run avg)',range:'7–10% p.a.',color:'#0284c7'},
+            {label:'Singapore STI (30-yr avg)',range:'~7–9% p.a.',color:'#0284c7'},
+            {label:'Balanced portfolio (60/40)',range:'5–7% p.a.',color:'#0369a1'},
+            {label:'CPF OA / SA rates',range:'2.5% / 4% p.a.',color:'#0c4a6e'},
+          ].map(item=>(
+            <div key={item.label} style={{background:'rgba(255,255,255,0.6)',borderRadius:8,padding:'8px 10px'}}>
+              <div style={{fontSize:10,color:'#64748b',marginBottom:2}}>{item.label}</div>
+              <div style={{fontSize:13,fontWeight:700,color:item.color}}>{item.range}</div>
+            </div>
+          ))}
+        </div>
+        Past returns do not guarantee future performance. Use conservative estimates for planning. Sources: MSCI, SGX, CPF Board.
+      </Trend>
+    </div>
+  );
+};
+
+const Step9 = ({s})=>{
+  const r=calcResults(s);
+  const surplus=r.retirementGap<=0;
+  const barColor=r.goalProgress>=80?'green':r.goalProgress>=50?'amber':'red';
+  const gapTc=surplus?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626';
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>Gap Analysis</h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>Here's how your current position compares to your retirement goal.</p>
+      <div style={{display:'flex',flexWrap:'wrap',gap:16,marginBottom:16,alignItems:'center'}}>
+        <div style={{background:'white',border:'1px solid #e7e5e4',borderRadius:14,padding:20,display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0}}>
+          <DonutChart progress={r.goalProgress} size={140}/>
+          <div style={{fontSize:12,fontWeight:600,color:'#57534e',marginTop:8}}>Progress to Goal</div>
+        </div>
+        <div style={{flex:1,minWidth:200,display:'flex',flexDirection:'column',gap:8}}>
+          {[
+            {label:'Fund Needed',value:fmt(r.simpleTotalFundNeeded,s.currency),color:'#1c1917'},
+            {label:'Projected Assets',value:fmt(r.projectedAssetsAtRetirement,s.currency),color:'#15803d'},
+            {label:surplus?'Retirement Surplus':'Retirement Gap',value:fmt(Math.abs(r.retirementGap),s.currency),color:gapTc},
+            {label:'Monthly Income Needed',value:fmt(r.futureMonthlyNeed,s.currency),color:'#1c1917'},
+            {label:'Projected Monthly Income',value:fmt(r.totalProjectedMonthlyIncome,s.currency),color:'#15803d'},
+          ].map(item=>(
+            <div key={item.label} style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,
+              padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:12,color:'#57534e'}}>{item.label}</span>
+              <span style={{fontSize:13,fontWeight:700,color:item.color}}>{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontSize:12,color:'#78716c'}}>Goal Progress</span>
+        <span style={{fontSize:13,fontWeight:700,color:gapTc}}>{fmtPct(r.goalProgress)}</span>
+      </div>
+      <ProgressBar value={r.goalProgress} max={100} color={barColor}/>
+    </div>
+  );
+};
+
+const Step10 = ({s})=>{
+  const r=calcResults(s);
+  const surplus=r.retirementGap<=0;
+  return(
+    <div className="slide-in">
+      <h2 style={{fontFamily:'Georgia,serif',fontSize:22,fontWeight:700,color:'#1c1917',marginBottom:4}}>
+        {surplus?'You\'re Ahead of Your Goal':'Additional Savings Needed'}
+      </h2>
+      <p style={{fontSize:13,color:'#78716c',marginBottom:20}}>
+        {surplus?'Based on your current position, you are projected to exceed your retirement goal. Here is a summary of your standing.'
+          :'Here is how much more you may want to set aside each month to close your retirement gap.'}
+      </p>
+      {surplus?(
+        <div style={{background:'#f0fdf4',border:'2px solid #86efac',borderRadius:16,padding:28,textAlign:'center',marginBottom:16}}>
+          <div style={{fontSize:40,marginBottom:10}}>🎉</div>
+          <div style={{fontWeight:800,fontSize:20,color:'#14532d',marginBottom:6}}>You have a Retirement Surplus</div>
+          <div style={{fontSize:13,color:'#166534',lineHeight:1.6}}>
+            Based on current projections, your retirement assets are on track to exceed your goal by <strong>{fmt(Math.abs(r.retirementGap),s.currency)}</strong>. Consider wealth preservation, legacy planning, or enhancing your lifestyle goal.
+          </div>
+        </div>
+      ):(
+        <>
+          <div style={{background:'#fffbeb',border:'2px solid #fde68a',borderRadius:16,padding:24,textAlign:'center',marginBottom:16}}>
+            <div style={{fontSize:11,color:'#92400e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Estimated Additional Monthly Savings Needed</div>
+            <div style={{fontWeight:800,fontSize:36,color:'#b45309',lineHeight:1}}>{fmt(r.monthlyTopUp,s.currency)}<span style={{fontSize:16,color:'#d97706'}}>/month</span></div>
+            <p style={{fontSize:11,color:'#78716c',marginTop:10,lineHeight:1.7}}>
+              To close your retirement gap of <strong>{fmt(r.retirementGap,s.currency)}</strong> by age {s.retirementAge}, you may need to set aside approximately <strong>{fmt(r.monthlyTopUp,s.currency)} more per month</strong>, assuming {s.preRetirementReturn}% annual return.
+            </p>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+            {[
+              {label:'Current Monthly Saving',value:fmt(s.monthlyContribution,s.currency),bg:'#fafaf9',tc:'#1c1917'},
+              {label:'Additional Needed',value:fmt(r.monthlyTopUp,s.currency),bg:'#fffbeb',tc:'#b45309'},
+              {label:'Suggested Total Monthly',value:fmt((+s.monthlyContribution||0)+r.monthlyTopUp,s.currency),bg:'#f0fdf4',tc:'#15803d'},
+            ].map(item=>(
+              <div key={item.label} style={{background:item.bg,border:'1px solid #e7e5e4',borderRadius:12,padding:'14px 10px',textAlign:'center'}}>
+                <div style={{fontSize:10,color:'#a8a29e',marginBottom:5,lineHeight:1.4}}>{item.label}</div>
+                <div style={{fontWeight:800,fontSize:14,color:item.tc}}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <Trend icon="🌏" tag="Regional Trend" title="Asia faces a growing retirement savings gap">
+        The <strong>HSBC Future of Retirement Study</strong> found that across Asia, the average working adult expects to have saved only <strong>60–70% of what they will actually need</strong> by retirement age. In Singapore, the median household over-estimates their retirement readiness by nearly <strong>30%</strong>.
+        The good news: starting just <strong>5 years earlier</strong> — or increasing monthly contributions by even 20% — can dramatically close the gap through the power of compound growth. Time is the most powerful financial tool available to you.
+      </Trend>
+      <div style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,padding:'12px 14px',fontSize:11,color:'#78716c',lineHeight:1.7,marginTop:16}}>
+        <strong style={{color:'#44403c'}}>Important note:</strong> These figures are estimates based on the assumptions you've entered. Actual results may vary depending on market performance, inflation, healthcare needs, and life changes. Review your plan at least once a year.
+      </div>
+    </div>
+  );
+};
+
+// ─── Questionnaire ────────────────────────────────────────────────────────────────
+
+const QuestionnairePage = ({data,setData,onComplete,onBack})=>{
+  const [step,setStep]=useState(1);
+  const [errs,setErrs]=useState({});
+  const u=(key,val)=>setData(prev=>({...prev,[key]:val}));
+  const validate=()=>{
+    const e={};
+    if((data.currentAge||0)<18||(data.currentAge||0)>100) e.currentAge='Please enter a valid age between 18 and 100.';
+    if((data.retirementAge||0)<=(data.currentAge||0)) e.retirementAge='Retirement age must be greater than your current age.';
+    if((data.planningAge||0)<=(data.retirementAge||0)) e.planningAge='Planning age must be greater than retirement age.';
+    setErrs(e); return Object.keys(e).length===0;
+  };
+  const next=()=>{
+    if(step===1&&!validate()) return;
+    if(step<10){setStep(s=>s+1);window.scrollTo(0,0);}else onComplete();
+  };
+  const prev=()=>{
+    if(step>1){setStep(s=>s-1);window.scrollTo(0,0);}else onBack();
+  };
+  const p={s:data,u,errs};
+  return(
+    <div style={{minHeight:'100vh',background:'#F7F6F3'}}>
+      <header className="no-print" style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'14px 20px',display:'flex',alignItems:'center',gap:12}}>
+        <button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',display:'flex'}}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:15,color:'#1c1917'}}>Retirement Life Planner</span>
+      </header>
+      <div style={{maxWidth:660,margin:'0 auto',padding:'28px 20px 80px'}}>
+        <StepNav step={step} total={10}/>
+        <Card style={{padding:28,marginBottom:20}}>
+          {step===1&&<Step1 {...p}/>}  {step===2&&<Step2 {...p}/>}
+          {step===3&&<Step3 {...p}/>}  {step===4&&<Step4 {...p}/>}
+          {step===5&&<Step5 {...p}/>}  {step===6&&<Step6 {...p}/>}
+          {step===7&&<Step7 {...p}/>}  {step===8&&<Step8 {...p}/>}
+          {step===9&&<Step9 {...p}/>}  {step===10&&<Step10 {...p}/>}
+        </Card>
+        <div className="no-print" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <Btn variant="secondary" onClick={prev}>{step===1?'← Home':'← Back'}</Btn>
+          <Btn onClick={next}>{step===10?'View My Report →':'Continue →'}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Focus Areas ──────────────────────────────────────────────────────────────────
+
+const getFocus=(progress,surplus)=>{
+  if(surplus||progress>=100) return{heading:'Your focus: Wealth Preservation & Legacy',tone:'surplus',areas:[
+    'Review your withdrawal strategy to make your assets last comfortably throughout retirement',
+    'Explore tax-efficient income drawdown planning options that suit your situation',
+    'Consider legacy planning, estate distribution, and family gifting strategies',
+    'Ensure comprehensive healthcare and long-term care coverage is in place',
+    'Explore charitable giving or legacy contribution goals that align with your values',
+  ]};
+  if(progress>=70) return{heading:'Your focus: Strengthen & Protect Your Position',tone:'near',areas:[
+    'Optimise your investment portfolio to maintain momentum toward your goal',
+    'Ensure adequate healthcare and critical illness coverage is in place',
+    'Plan your CPF LIFE or annuity income withdrawal strategy in advance',
+    'Consider building one or two additional passive income streams',
+    'Protect your accumulated wealth from inflation risk over the long term',
+  ]};
+  return{heading:'Your focus: Build & Close the Retirement Gap',tone:'gap',areas:[
+    'Increase your monthly retirement contribution — even small increases compound significantly over time',
+    'Review your investment strategy and assess whether your expected returns are realistic',
+    'Consider whether delaying your retirement age by a few years could make a meaningful difference',
+    'Explore opportunities to build additional passive income sources before retirement',
+    'Review your lifestyle assumptions to find a comfortable and sustainable balance',
+  ]};
+};
+
+// ─── Share Modal ──────────────────────────────────────────────────────────────────
+
+const ShareModal = ({data,onClose})=>{
+  const showToast=useToast();
+  const [loading,setLoading]=useState(false);
+  const shareUrl=getShareUrl(data);
+
+  const copyLink=async()=>{
+    if(!shareUrl){showToast('Could not generate share link','error');return;}
+    try{
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('Share link copied to clipboard!');
+    }catch{
+      const ta=document.createElement('textarea');
+      ta.value=shareUrl; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      showToast('Share link copied!');
+    }
+  };
+
+  const downloadFile=async()=>{
+    setLoading(true);
+    const ok=await exportShareableFile(data);
+    setLoading(false);
+    if(ok){showToast('Shareable file downloaded!');}
+    else{showToast('Could not generate file. Try right-clicking and "Save As" the page.','error');}
+  };
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}
+      onClick={onClose}>
+      <div style={{background:'white',borderRadius:20,padding:28,maxWidth:480,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,0.2)'}}
+        onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:20}}>
+          <div>
+            <h3 style={{fontFamily:'Georgia,serif',fontSize:18,fontWeight:700,color:'#1c1917',marginBottom:4}}>Share This Plan</h3>
+            <p style={{fontSize:12,color:'#78716c'}}>Let others view {data.name?`${data.name}'s`:'your'} retirement plan.</p>
+          </div>
+          <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',fontSize:20,lineHeight:1}}>×</button>
+        </div>
+
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:14,padding:18}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+              <span style={{fontSize:24,flexShrink:0}}>🔗</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13,color:'#14532d',marginBottom:3}}>Copy Share Link</div>
+                <div style={{fontSize:11,color:'#166534',lineHeight:1.6,marginBottom:10}}>
+                  Generates a URL with your plan data encoded. Works perfectly when this app is hosted on a web server.
+                </div>
+                <Btn onClick={copyLink} size="sm">Copy Link</Btn>
+              </div>
+            </div>
+          </div>
+
+          <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:14,padding:18}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+              <span style={{fontSize:24,flexShrink:0}}>📄</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13,color:'#1e3a5f',marginBottom:3}}>Download Shareable File</div>
+                <div style={{fontSize:11,color:'#1e40af',lineHeight:1.6,marginBottom:10}}>
+                  Downloads a self-contained HTML file with your plan pre-loaded. The recipient just opens the file — no setup required. Great for sharing via email or message.
+                </div>
+                <Btn onClick={downloadFile} variant="secondary" size="sm">{loading?'Generating…':'Download File'}</Btn>
+              </div>
+            </div>
+          </div>
+
+          <div style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:14,padding:18}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+              <span style={{fontSize:24,flexShrink:0}}>🖨</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13,color:'#44403c',marginBottom:3}}>Print or Save as PDF</div>
+                <div style={{fontSize:11,color:'#78716c',lineHeight:1.6,marginBottom:10}}>
+                  Print this report using your browser's print function, then choose "Save as PDF" for a clean, shareable document.
+                </div>
+                <Btn onClick={()=>{onClose();setTimeout(()=>window.print(),300);}} variant="secondary" size="sm">Open Print Dialog</Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Report Page ──────────────────────────────────────────────────────────────────
+
+const ReportPage = ({data,onEdit,onSave,onHome,isSaved,onViewSaved})=>{
+  const r=useMemo(()=>calcResults(data),[data]);
+  const surplus=r.retirementGap<=0;
+  const focus=getFocus(r.goalProgress,surplus);
+  const barColor=r.goalProgress>=80?'green':r.goalProgress>=50?'amber':'red';
+  const lifestyle=LIFESTYLE_PRESETS[data.lifestyleChoice];
+  const showToast=useToast();
+  const [showShare,setShowShare]=useState(false);
+
+  const exportJSON=()=>{
+    const blob=new Blob([JSON.stringify({data,results:r,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=`retirement-plan-${data.name||'report'}.json`; a.click();
+    URL.revokeObjectURL(url);
+    showToast('JSON exported!');
+  };
+
+  const Sec=({num,title,children})=>(
+    <Card style={{padding:24,marginBottom:16}}>
+      <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:16}}>
+        <span style={{width:24,height:24,borderRadius:'50%',background:'#f5f5f4',border:'1px solid #e7e5e4',
+          display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#78716c',flexShrink:0}}>{num}</span>
+        <h2 style={{fontFamily:'Georgia,serif',fontSize:17,fontWeight:700,color:'#1c1917'}}>{title}</h2>
+      </div>
+      {children}
+    </Card>
+  );
+
+  return(
+    <div style={{minHeight:'100vh',background:'#F7F6F3'}}>
+      {showShare&&<ShareModal data={data} onClose={()=>setShowShare(false)}/>}
+      <header className="no-print" style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'12px 20px',
+        display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <button onClick={onHome} style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',display:'flex'}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </button>
+          <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:15,color:'#1c1917'}}>Retirement Life Planner</span>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {!isSaved&&<Btn onClick={onSave} size="sm">💾 Save</Btn>}
+          {isSaved&&<Btn onClick={onViewSaved} variant="secondary" size="sm">My Reports</Btn>}
+          <Btn onClick={()=>setShowShare(true)} variant="teal" size="sm">🔗 Share</Btn>
+          <Btn onClick={onEdit} variant="secondary" size="sm">✏️ Edit</Btn>
+          <Btn onClick={exportJSON} variant="ghost" size="sm">JSON</Btn>
+          <Btn onClick={()=>window.print()} variant="ghost" size="sm">🖨 Print</Btn>
+        </div>
+      </header>
+
+      <div style={{maxWidth:720,margin:'0 auto',padding:'28px 20px 60px'}}>
+        {/* Header */}
+        <div style={{textAlign:'center',marginBottom:28}}>
+          <div style={{fontSize:10,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:8}}>Retirement Planning Report</div>
+          <h1 style={{fontFamily:'Georgia,serif',fontSize:28,fontWeight:700,color:'#1c1917',marginBottom:4}}>
+            {data.name?`${data.name}'s Retirement Plan`:'Your Retirement Plan'}
+          </h1>
+          <p style={{fontSize:12,color:'#a8a29e'}}>Generated {new Date().toLocaleDateString('en-SG',{year:'numeric',month:'long',day:'numeric'})}</p>
+        </div>
+
+        {/* Banner */}
+        <div style={{background:surplus?'#f0fdf4':r.goalProgress>=70?'#fffbeb':'#fff1f2',
+          border:`1px solid ${surplus?'#86efac':r.goalProgress>=70?'#fde68a':'#fecdd3'}`,
+          borderRadius:16,padding:'16px 20px',marginBottom:20,
+          display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:700,color:surplus?'#14532d':r.goalProgress>=70?'#92400e':'#be123c'}}>
+              {surplus?'🎉 You have a retirement surplus':'You currently have a retirement gap to work on — and here are the key areas to strengthen'}
+            </div>
+            <div style={{fontSize:11,color:'#78716c',marginTop:2}}>
+              {surplus?`You're projected to exceed your retirement goal by ${fmt(Math.abs(r.retirementGap),data.currency)}.`
+                :`You're ${fmtPct(r.goalProgress)} of the way to your retirement goal.`}
+            </div>
+          </div>
+          <DonutChart progress={r.goalProgress} size={80}/>
+        </div>
+
+        {/* 1 */}
+        <Sec num="1" title="Retirement Lifestyle Summary">
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:14}}>
+            {[
+              {label:'Lifestyle Choice',value:lifestyle?.label||'Custom'},
+              {label:'Retirement Age',value:`Age ${data.retirementAge}`},
+              {label:'Planning Until',value:`Age ${data.planningAge}`},
+              {label:'Retirement Duration',value:`${r.retirementDuration} years`},
+            ].map(item=>(
+              <div key={item.label} style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:10,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'#a8a29e',marginBottom:3,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
+                <div style={{fontWeight:700,fontSize:14,color:'#1c1917'}}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{background:'#fafaf9',border:'1px solid #e7e5e4',borderRadius:12,padding:'14px 16px',
+            display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
+            <div>
+              <div style={{fontSize:10,color:'#a8a29e',marginBottom:3}}>Monthly Lifestyle Cost — Today</div>
+              <div style={{fontWeight:800,fontSize:18,color:'#1c1917'}}>{fmt(r.currentMonthlyNeed,data.currency)}</div>
+            </div>
+            <div style={{color:'#d6d3d1',fontSize:22}}>→</div>
+            <div style={{textAlign:'right'}}>
+              <div style={{fontSize:10,color:'#a8a29e',marginBottom:3}}>Future Monthly Cost at Retirement</div>
+              <div style={{fontWeight:800,fontSize:18,color:'#b45309'}}>{fmt(r.futureMonthlyNeed,data.currency)}</div>
+            </div>
+          </div>
+        </Sec>
+
+        {/* 2 */}
+        <Sec num="2" title="Your Retirement Number">
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:14,padding:20,textAlign:'center'}}>
+              <div style={{fontSize:10,color:'#78716c',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Monthly Income Needed at Retirement</div>
+              <div style={{fontWeight:800,fontSize:24,color:'#15803d'}}>{fmt(r.futureMonthlyNeed,data.currency)}</div>
+              <div style={{fontSize:10,color:'#a8a29e',marginTop:3}}>per month</div>
+            </div>
+            <div style={{background:'#1c1917',borderRadius:14,padding:20,textAlign:'center'}}>
+              <div style={{fontSize:10,color:'#a8a29e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Total Retirement Fund Needed</div>
+              <div style={{fontWeight:800,fontSize:24,color:'white'}}>{fmt(r.simpleTotalFundNeeded,data.currency)}</div>
+              <div style={{fontSize:10,color:'#78716c',marginTop:3}}>total lump sum</div>
+            </div>
+          </div>
+        </Sec>
+
+        {/* 3 */}
+        <Sec num="3" title="Your Current Position">
+          <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'center',marginBottom:16}}>
+            <div style={{flexShrink:0}}><DonutChart progress={r.goalProgress} size={140}/></div>
+            <div style={{flex:1,minWidth:180,display:'flex',flexDirection:'column',gap:7}}>
+              {[
+                {label:'Current Retirement Assets',value:fmt(r.totalCurrentAssets,data.currency)},
+                {label:'Growth from Existing Assets',value:fmt(r.fvCurrentAssets,data.currency)},
+                {label:'Growth from Monthly Contributions',value:fmt(r.fvMonthlyContributions,data.currency)},
+                {label:'Projected Assets at Retirement',value:fmt(r.projectedAssetsAtRetirement,data.currency),hl:true},
+                {label:'Fixed Monthly Income Sources',value:fmt(r.monthlyRetirementIncome,data.currency)},
+                {label:'Total Projected Monthly Income',value:fmt(r.totalProjectedMonthlyIncome,data.currency),hl:true},
+              ].map(item=>(
+                <div key={item.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  background:item.hl?'#f0fdf4':'#fafaf9',border:`1px solid ${item.hl?'#bbf7d0':'#e7e5e4'}`,
+                  borderRadius:8,padding:'7px 10px'}}>
+                  <span style={{fontSize:11,color:'#57534e'}}>{item.label}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:item.hl?'#15803d':'#1c1917'}}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+            <span style={{fontSize:12,color:'#78716c'}}>Progress to Retirement Goal</span>
+            <span style={{fontSize:13,fontWeight:700,color:r.goalProgress>=80?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(r.goalProgress)}</span>
+          </div>
+          <ProgressBar value={r.goalProgress} max={100} color={barColor}/>
+        </Sec>
+
+        {/* 4 */}
+        <Sec num="4" title="Gap Analysis">
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:surplus?0:14}}>
+            {[
+              {label:'Retirement Fund Target',value:fmt(r.simpleTotalFundNeeded,data.currency)},
+              {label:'Projected Assets at Retirement',value:fmt(r.projectedAssetsAtRetirement,data.currency),hl:true},
+              {label:surplus?'Retirement Surplus':'Retirement Fund Gap',value:fmt(Math.abs(r.retirementGap),data.currency),hl:surplus,am:!surplus},
+              {label:'Years Available',value:`${r.yearsToRetirement} years`},
+            ].map(item=>(
+              <div key={item.label} style={{background:item.hl?'#f0fdf4':item.am?'#fffbeb':'#fafaf9',
+                border:`1px solid ${item.hl?'#bbf7d0':item.am?'#fde68a':'#e7e5e4'}`,borderRadius:10,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'#a8a29e',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em'}}>{item.label}</div>
+                <div style={{fontWeight:800,fontSize:14,color:item.hl?'#15803d':item.am?'#b45309':'#1c1917'}}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+          {!surplus&&(
+            <div style={{background:'#fffbeb',border:'2px solid #fde68a',borderRadius:14,padding:20,textAlign:'center'}}>
+              <div style={{fontSize:10,color:'#92400e',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Estimated Additional Monthly Savings Needed</div>
+              <div style={{fontWeight:800,fontSize:28,color:'#b45309'}}>{fmt(r.monthlyTopUp,data.currency)}<span style={{fontSize:14,color:'#d97706'}}>/month</span></div>
+              <div style={{fontSize:10,color:'#78716c',marginTop:6}}>to close the gap by age {data.retirementAge}, assuming {data.preRetirementReturn}% annual return</div>
+            </div>
+          )}
+        </Sec>
+
+        {/* 5 */}
+        <Sec num="5" title="Planning Focus Areas">
+          <div style={{fontSize:12,fontWeight:700,color:'#44403c',marginBottom:12}}>{focus.heading}</div>
+          <ul style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:8}}>
+            {focus.areas.map((area,i)=>(
+              <li key={i} style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                <span style={{width:22,height:22,borderRadius:'50%',
+                  background:focus.tone==='surplus'?'#dcfce7':focus.tone==='near'?'#dbeafe':'#fef9c3',
+                  color:focus.tone==='surplus'?'#15803d':focus.tone==='near'?'#1d4ed8':'#92400e',
+                  fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>
+                  {i+1}
+                </span>
+                <span style={{fontSize:13,color:'#44403c',lineHeight:1.6}}>{area}</span>
+              </li>
+            ))}
+          </ul>
+        </Sec>
+
+        {/* 6 */}
+        <Card style={{background:'#fafaf9',padding:20,marginBottom:16}}>
+          <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
+            <span style={{fontSize:16,flexShrink:0}}>ℹ️</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#44403c',marginBottom:4}}>Important Reminder</div>
+              <p style={{fontSize:11,color:'#78716c',lineHeight:1.7,margin:0}}>
+                This estimate is for planning purposes only. Actual retirement needs may change depending on inflation, investment returns, healthcare costs, family responsibilities, policy changes, and lifestyle changes. We recommend reviewing your plan at least once a year, or whenever there is a significant life event. Consider working with a licensed financial adviser for personalised guidance.
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        {/* 7 */}
+        <Sec num="7" title="Suggested Next Steps">
+          <ol style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:10}}>
+            {[
+              'Confirm your desired retirement lifestyle and review your monthly expense estimates',
+              'Review your current retirement income sources and projected growth trajectory',
+              'Identify your retirement income gap and decide on a concrete contribution strategy',
+              'Set up or increase your monthly retirement savings and investment contributions',
+              'Review this plan at least once a year or after any major life change',
+            ].map((step,i)=>(
+              <li key={i} style={{display:'flex',alignItems:'flex-start',gap:12}}>
+                <span style={{width:24,height:24,borderRadius:'50%',background:'#1c1917',color:'white',
+                  fontSize:11,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>
+                  {i+1}
+                </span>
+                <span style={{fontSize:13,color:'#44403c',lineHeight:1.6}}>{step}</span>
+              </li>
+            ))}
+          </ol>
+        </Sec>
+
+        {/* Assumptions */}
+        <Card style={{background:'#fafaf9',padding:20}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#57534e',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.06em'}}>Key Assumptions Used</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+            {[
+              {label:'Inflation Rate',value:`${data.inflationRate}%`},
+              {label:'Pre-Retirement Return',value:`${data.preRetirementReturn}%`},
+              {label:'Portfolio Return (Retirement)',value:`${data.portfolioReturnDuringRetirement}%`},
+              {label:'Withdrawal Strategy',value:data.withdrawalStrategy},
+            ].map(item=>(
+              <div key={item.label} style={{background:'white',border:'1px solid #e7e5e4',borderRadius:8,padding:'10px 8px',textAlign:'center'}}>
+                <div style={{fontSize:9,color:'#a8a29e',marginBottom:3}}>{item.label}</div>
+                <div style={{fontSize:12,fontWeight:700,color:'#44403c',textTransform:'capitalize'}}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+// ─── Saved Reports Page ────────────────────────────────────────────────────────────
+
+const SavedReportsPage = ({reports,onView,onDelete,onDuplicate,onHome,onNew})=>{
+  const [comparing,setComparing]=useState([]);
+  const [delConfirm,setDelConfirm]=useState(null);
+  const showToast=useToast();
+
+  const toggleCompare=id=>setComparing(p=>p.includes(id)?p.filter(x=>x!==id):p.length<2?[...p,id]:p);
+
+  const exportJSON=report=>{
+    const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=`retirement-plan-${report.data.name||'report'}.json`; a.click();
+    URL.revokeObjectURL(url); showToast('Exported!');
+  };
+
+  const shareReport=async report=>{
+    const ok=await exportShareableFile(report.data);
+    if(ok) showToast('Shareable file downloaded!');
+    else showToast('Could not generate file — try the Share button on the report view.','error');
+  };
+
+  const compareReports=comparing.map(id=>reports.find(r=>r.id===id)).filter(Boolean);
+  return(
+    <div style={{minHeight:'100vh',background:'#F7F6F3'}}>
+      <header style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'12px 20px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <button onClick={onHome} style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',display:'flex'}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:15,color:'#1c1917'}}>Saved Reports</span>
+          <span style={{background:'#f5f5f4',borderRadius:99,padding:'2px 8px',fontSize:11,fontWeight:700,color:'#78716c'}}>{reports.length}</span>
+        </div>
+        <Btn onClick={onNew} size="sm">+ New Plan</Btn>
+      </header>
+
+      <div style={{maxWidth:860,margin:'0 auto',padding:'24px 20px 60px'}}>
+        {reports.length===0?(
+          <div style={{textAlign:'center',padding:'80px 20px'}}>
+            <div style={{fontSize:48,marginBottom:16}}>📋</div>
+            <h3 style={{fontFamily:'Georgia,serif',fontSize:20,fontWeight:700,color:'#44403c',marginBottom:8}}>No saved reports yet</h3>
+            <p style={{fontSize:13,color:'#a8a29e',marginBottom:20}}>Create your first retirement plan to see your results saved here.</p>
+            <Btn onClick={onNew}>Start Planning →</Btn>
+          </div>
+        ):(
+          <>
+            {comparing.length===2&&(
+              <div style={{background:'white',border:'1px solid #e7e5e4',borderRadius:16,padding:20,marginBottom:20}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+                  <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:15,color:'#1c1917'}}>Side-by-Side Comparison</span>
+                  <Btn onClick={()=>setComparing([])} variant="ghost" size="sm">Clear</Btn>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                  {compareReports.map(report=>{
+                    const r=calcResults(report.data);
+                    return(
+                      <div key={report.id} style={{background:'#fafaf9',borderRadius:12,padding:16}}>
+                        <div style={{fontWeight:700,fontSize:14,color:'#1c1917',marginBottom:12}}>{report.data.name||'Unnamed Plan'}</div>
+                        {[
+                          {l:'Retire at',v:`Age ${report.data.retirementAge}`},
+                          {l:'Lifestyle',v:LIFESTYLE_PRESETS[report.data.lifestyleChoice]?.label||'Custom'},
+                          {l:'Fund Needed',v:fmt(r.simpleTotalFundNeeded,report.data.currency)},
+                          {l:'Projected Assets',v:fmt(r.projectedAssetsAtRetirement,report.data.currency)},
+                          {l:'Goal Progress',v:fmtPct(r.goalProgress)},
+                          {l:'Monthly Top-Up Needed',v:fmt(r.monthlyTopUp,report.data.currency)},
+                        ].map(item=>(
+                          <div key={item.l} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px solid #e7e5e4'}}>
+                            <span style={{fontSize:11,color:'#78716c'}}>{item.l}</span>
+                            <span style={{fontSize:12,fontWeight:700,color:'#1c1917'}}>{item.v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {comparing.length===1&&(
+              <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:10,padding:'10px 16px',marginBottom:16,fontSize:12,color:'#1e40af'}}>
+                ℹ️ Select one more report to compare side by side.
+              </div>
+            )}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:16}}>
+              {reports.map(report=>{
+                const r=calcResults(report.data);
+                const surplus=r.retirementGap<=0;
+                const isComp=comparing.includes(report.id);
+                const status=surplus?{bg:'#dcfce7',tc:'#15803d',label:'Surplus'}
+                  :r.goalProgress>=70?{bg:'#fef9c3',tc:'#92400e',label:'On Track'}
+                  :{bg:'#fee2e2',tc:'#dc2626',label:'Gap'};
+                return(
+                  <div key={report.id} style={{background:'white',borderRadius:16,padding:20,
+                    border:`2px solid ${isComp?'#93c5fd':'#e7e5e4'}`,
+                    outline:isComp?'3px solid #bfdbfe':'none',outlineOffset:1,transition:'all 0.2s'}}>
+                    {delConfirm===report.id?(
+                      <div style={{textAlign:'center',padding:'16px 0'}}>
+                        <div style={{fontSize:13,fontWeight:600,color:'#1c1917',marginBottom:6}}>Delete this report?</div>
+                        <div style={{fontSize:11,color:'#78716c',marginBottom:14}}>This cannot be undone.</div>
+                        <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+                          <Btn onClick={()=>{onDelete(report.id);setDelConfirm(null);showToast('Report deleted');}} variant="danger" size="sm">Yes, delete</Btn>
+                          <Btn onClick={()=>setDelConfirm(null)} variant="secondary" size="sm">Cancel</Btn>
+                        </div>
+                      </div>
+                    ):(
+                      <>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:15,color:'#1c1917'}}>{report.data.name||'Unnamed Plan'}</div>
+                            <div style={{fontSize:11,color:'#a8a29e',marginTop:2}}>{new Date(report.savedAt).toLocaleDateString('en-SG',{year:'numeric',month:'short',day:'numeric'})}</div>
+                          </div>
+                          <span style={{background:status.bg,color:status.tc,fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:99}}>{status.label}</span>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+                          <div style={{background:'#fafaf9',borderRadius:8,padding:10,textAlign:'center'}}>
+                            <div style={{fontSize:10,color:'#a8a29e',marginBottom:3}}>Retire at</div>
+                            <div style={{fontSize:14,fontWeight:800,color:'#1c1917'}}>Age {report.data.retirementAge}</div>
+                          </div>
+                          <div style={{background:'#fafaf9',borderRadius:8,padding:10,textAlign:'center'}}>
+                            <div style={{fontSize:10,color:'#a8a29e',marginBottom:3}}>Goal Progress</div>
+                            <div style={{fontSize:14,fontWeight:800,color:r.goalProgress>=80?'#15803d':r.goalProgress>=50?'#b45309':'#dc2626'}}>{fmtPct(r.goalProgress)}</div>
+                          </div>
+                        </div>
+                        <div style={{marginBottom:14}}>
+                          <ProgressBar value={r.goalProgress} max={100} color={r.goalProgress>=80?'green':r.goalProgress>=50?'amber':'red'}/>
+                        </div>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                          <Btn onClick={()=>onView(report)} size="sm">View</Btn>
+                          <Btn onClick={()=>toggleCompare(report.id)} variant={isComp?'primary':'secondary'} size="sm">{isComp?'✓ Comparing':'Compare'}</Btn>
+                          <Btn onClick={()=>onDuplicate(report)} variant="secondary" size="sm">Duplicate</Btn>
+                          <Btn onClick={()=>shareReport(report)} variant="teal" size="sm">🔗 Share</Btn>
+                          <Btn onClick={()=>exportJSON(report)} variant="ghost" size="sm">JSON</Btn>
+                          <Btn onClick={()=>setDelConfirm(report.id)} variant="danger" size="sm">Delete</Btn>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Welcome Page ─────────────────────────────────────────────────────────────────
+
+const WelcomePage = ({onStart,savedCount,onViewSaved})=>(
+  <div style={{minHeight:'100vh',background:'#F7F6F3',display:'flex',flexDirection:'column'}}>
+    <header style={{background:'white',borderBottom:'1px solid #e7e5e4',padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <div style={{width:34,height:34,borderRadius:10,background:'#15803d',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+        <span style={{fontFamily:'Georgia,serif',fontWeight:700,fontSize:16,color:'#1c1917'}}>Retirement Life Planner</span>
+      </div>
+      {savedCount>0&&<button onClick={onViewSaved} style={{background:'none',border:'none',cursor:'pointer',fontSize:13,fontWeight:600,color:'#15803d'}}>My Reports ({savedCount})</button>}
+    </header>
+    <main style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'48px 24px',maxWidth:680,margin:'0 auto',width:'100%',textAlign:'center'}}>
+      <div style={{display:'inline-flex',alignItems:'center',gap:6,background:'#f0fdf4',border:'1px solid #86efac',borderRadius:99,padding:'4px 12px',fontSize:11,fontWeight:700,color:'#15803d',marginBottom:28,letterSpacing:'0.04em'}}>
+        <span style={{width:6,height:6,background:'#22c55e',borderRadius:'50%'}}></span>
+        Retirement Planning
+      </div>
+      <h1 style={{fontFamily:'Georgia,serif',fontSize:42,fontWeight:700,color:'#1c1917',lineHeight:1.2,marginBottom:18}}>
+        Design Your<br/>Retirement Life
+      </h1>
+      <p style={{fontSize:16,color:'#57534e',lineHeight:1.7,marginBottom:12,maxWidth:500}}>
+        Before knowing how much you need, let's first understand the kind of life you want to live.
+      </p>
+      <p style={{fontSize:13,color:'#a8a29e',lineHeight:1.8,marginBottom:36,maxWidth:480}}>
+        Retirement is not just a number — it's a lifestyle. This planner helps you estimate the monthly income you may need based on your desired lifestyle, current savings, future income sources, and retirement timeline. Along the way, we'll share real-world trends on longevity, inflation, and market returns to help you plan with confidence.
+      </p>
+      <button onClick={onStart}
+        style={{background:'#15803d',color:'white',border:'none',borderRadius:14,padding:'14px 36px',fontSize:15,fontWeight:700,cursor:'pointer',boxShadow:'0 4px 14px rgba(21,128,61,0.25)',transition:'all 0.2s'}}
+        onMouseEnter={e=>e.target.style.background='#166534'} onMouseLeave={e=>e.target.style.background='#15803d'}>
+        Start Planning →
+      </button>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginTop:56,width:'100%'}}>
+        {[
+          {icon:'📈',title:'Trend-Informed',desc:'Real longevity, inflation, and market data to help you plan with confidence.'},
+          {icon:'🏡',title:'Lifestyle-Based',desc:'We start with the life you want, not abstract numbers.'},
+          {icon:'🔗',title:'Fully Shareable',desc:'Share your plan as a link or self-contained file with anyone.'},
+        ].map(item=>(
+          <div key={item.title} style={{background:'white',border:'1px solid #e7e5e4',borderRadius:14,padding:18,textAlign:'left'}}>
+            <div style={{fontSize:24,marginBottom:8}}>{item.icon}</div>
+            <div style={{fontSize:13,fontWeight:700,color:'#1c1917',marginBottom:4}}>{item.title}</div>
+            <div style={{fontSize:11,color:'#78716c',lineHeight:1.6}}>{item.desc}</div>
+          </div>
+        ))}
+      </div>
+    </main>
+  </div>
+);
+
+// ─── App Root ─────────────────────────────────────────────────────────────────────
+
+const App = ()=>{
+  // Initialize state — check for shared plan in window global or URL hash
+  const [formData,setFormData]=useState(()=>{
+    if(window.__SHARED_PLAN__) return {...DEFAULT_STATE,...window.__SHARED_PLAN__};
+    const hash=window.location.hash;
+    if(hash.startsWith('#plan=')){
+      const decoded=decodeState(hash.slice(6));
+      if(decoded) return {...DEFAULT_STATE,...decoded};
+    }
+    return {...DEFAULT_STATE};
+  });
+
+  const [page,setPage]=useState(()=>{
+    if(window.__SHARED_PLAN__) return 'report';
+    const hash=window.location.hash;
+    if(hash.startsWith('#plan=')){
+      const decoded=decodeState(hash.slice(6));
+      if(decoded) return 'report';
+    }
+    return 'welcome';
+  });
+
+  const [reports,setReports]=useState(()=>{
+    try{return JSON.parse(localStorage.getItem('rlp_v1_reports')||'[]');}catch{return[];}
+  });
+  const [viewingReport,setViewingReport]=useState(null);
+
+  useEffect(()=>{
+    try{localStorage.setItem('rlp_v1_reports',JSON.stringify(reports));}catch{}
+  },[reports]);
+
+  const nav=p=>{setPage(p);window.scrollTo(0,0);};
+
+  const saveReport=()=>{
+    if(viewingReport){
+      setReports(prev=>prev.map(r=>r.id===viewingReport.id?{...r,data:{...formData},updatedAt:new Date().toISOString()}:r));
+    }else{
+      const report={id:Date.now().toString(),savedAt:new Date().toISOString(),data:{...formData}};
+      setReports(prev=>[report,...prev]);
+      setViewingReport(report);
+    }
+  };
+
+  const reportData=viewingReport?viewingReport.data:formData;
+
+  return(
+    <ToastProvider>
+      {page==='welcome'&&<WelcomePage onStart={()=>{setFormData({...DEFAULT_STATE});setViewingReport(null);nav('questionnaire');}} savedCount={reports.length} onViewSaved={()=>nav('saved')}/>}
+      {page==='questionnaire'&&<QuestionnairePage data={formData} setData={setFormData} onComplete={()=>nav('report')} onBack={()=>nav('welcome')}/>}
+      {page==='report'&&<ReportPage data={reportData} onEdit={()=>{if(viewingReport)setFormData({...viewingReport.data});nav('questionnaire');}} onSave={saveReport} onHome={()=>nav('welcome')} isSaved={!!viewingReport} onViewSaved={()=>nav('saved')}/>}
+      {page==='saved'&&<SavedReportsPage reports={reports}
+        onView={r=>{setViewingReport(r);nav('report');}}
+        onDelete={id=>setReports(p=>p.filter(r=>r.id!==id))}
+        onDuplicate={r=>{const d={...r,id:Date.now().toString(),savedAt:new Date().toISOString(),data:{...r.data,name:`${r.data.name||'Plan'} (Copy)`}};setReports(p=>[d,...p]);}}
+        onHome={()=>nav('welcome')}
+        onNew={()=>{setFormData({...DEFAULT_STATE});setViewingReport(null);nav('questionnaire');}}/>}
+    </ToastProvider>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
